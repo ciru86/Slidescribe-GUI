@@ -126,6 +126,16 @@ struct ContentView: View {
                     .disabled(isRunning || workdirValidationMessage != nil || urlValidationMessage != nil)
 
                     Button {
+                        generateCommand()
+                    } label: {
+                        Label("Generate", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .buttonBorderShape(.roundedRectangle(radius: 10))
+                    .disabled(workdirValidationMessage != nil || urlValidationMessage != nil)
+
+                    Button {
                         showExecutionLogWindow = true
                     } label: {
                         Label("Log", systemImage: "terminal")
@@ -405,6 +415,19 @@ struct ContentView: View {
             feedbackMessage = "Esecuzione fallita."
             appendToLog("\n[Launch error] \(error.localizedDescription)\n")
         }
+    }
+
+    private func generateCommand() {
+        guard workdirValidationMessage == nil, urlValidationMessage == nil else {
+            feedbackMessage = "Correggi workdir e URL prima di generare il comando."
+            return
+        }
+
+        generatedCommand = buildCommandString()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(generatedCommand, forType: .string)
+        executionStatus = isRunning ? executionStatus : "Idle"
+        feedbackMessage = "Comando generato e copiato negli appunti."
     }
 
     private func stopRunningProcess() {
