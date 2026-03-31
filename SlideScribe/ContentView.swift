@@ -21,6 +21,10 @@ struct ContentView: View {
     @State private var showOptionsWindow: Bool = false
     @State private var isDropTargeted: Bool = false
     @State private var isDropHovered: Bool = false
+    @State private var hoveredToolbarHelpText: String = ""
+    @State private var pendingToolbarHelpText: String = ""
+    @State private var hoveredToolbarHelpLocation: CGPoint = .zero
+    @State private var hoveredToolbarHelpTask: Task<Void, Never>?
 
     @State private var executionLog: String = ""
     @State private var showExecutionLogWindow: Bool = false
@@ -75,14 +79,35 @@ struct ContentView: View {
                     ToolbarPill {
                         IconOnlyButton(icon: "gearshape", helpText: "Opzioni") {
                             showOptionsWindow = true
+                        } onHoverChanged: { phase in
+                            updateToolbarHelp("Opzioni", phase: phase)
                         }
                     }
 
                     Spacer(minLength: 0)
 
                     ToolbarPill {
+                        IconOnlyButton(icon: "nosign", helpText: "Azzera impostazioni, workdir e URL") {
+                            resetInputs()
+                        } onHoverChanged: { phase in
+                            updateToolbarHelp("Azzera impostazioni, workdir e URL", phase: phase)
+                        }
+                    }
+
+                    ToolbarPill {
+                        IconOnlyButton(icon: "eye", helpText: "Mostra workdir nel Finder") {
+                            openWorkdirInFinder()
+                        } onHoverChanged: { phase in
+                            updateToolbarHelp("Mostra workdir nel Finder", phase: phase)
+                        }
+                        .disabled(workdirValidationMessage != nil)
+                    }
+
+                    ToolbarPill {
                         IconOnlyButton(icon: "folder", helpText: "Scegli o crea workdir") {
                             pickOutputFolder()
+                        } onHoverChanged: { phase in
+                            updateToolbarHelp("Scegli o crea workdir", phase: phase)
                         }
                     }
                 }
@@ -197,8 +222,23 @@ struct ContentView: View {
                     )
                 }
             }
-            .padding(18)
+            .padding(.horizontal, 18)
+            .padding(.bottom, 18)
+            .padding(.top, 2)
+
+            GeometryReader { proxy in
+                if !hoveredToolbarHelpText.isEmpty {
+                    PointerTooltip(text: hoveredToolbarHelpText)
+                        .position(
+                            x: min(max(hoveredToolbarHelpLocation.x + 20, 90), proxy.size.width - 120),
+                            y: min(hoveredToolbarHelpLocation.y + 28, proxy.size.height - 24)
+                        )
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
         }
+        .coordinateSpace(name: "ContentViewSpace")
         .frame(width: 640, height: 560, alignment: .topLeading)
         .sheet(isPresented: $showOptionsWindow) {
             OptionsSheet(
@@ -276,7 +316,7 @@ struct ContentView: View {
 
     private var outputFolderDisplayName: String {
         if outputFolderPath.isEmpty {
-            return "Drop Workdir Here"
+            return "Drop Working Directory Here"
         }
         return URL(fileURLWithPath: outputFolderPath).lastPathComponent
     }
@@ -303,10 +343,14 @@ struct ContentView: View {
         return nil
     }
 
+    private var requiresYouTubeURL: Bool {
+        !(skipDownload && skipSubs)
+    }
+
     private var urlValidationMessage: String? {
         let trimmed = inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            return "Inserisci un URL YouTube"
+            return requiresYouTubeURL ? "Inserisci un URL YouTube" : nil
         }
 
         guard let url = URL(string: trimmed), let host = url.host?.lowercased() else {
@@ -330,6 +374,89 @@ struct ContentView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         outputFolderPath = url.path
+    }
+
+    private func openWorkdirInFinder() {
+        let trimmed = outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let url = URL(fileURLWithPath: trimmed)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func resetInputs() {
+        outputFolderPath = ""
+        inputURL = ""
+        generatedCommand = ""
+        feedbackMessage = ""
+        hoveredToolbarHelpText = ""
+        pendingToolbarHelpText = ""
+        hoveredToolbarHelpLocation = .zero
+        hoveredToolbarHelpTask?.cancel()
+        hoveredToolbarHelpTask = nil
+
+        videoBasename = ""
+        lessonTopic = ""
+        terminologyContext = ""
+        terminologyFile = ""
+        roiMode = "separate"
+        enhanceSlide = true
+        enhancePreset = ""
+        chunkSize = ""
+        subLangs = ""
+        ytdlpMode = ""
+        cookiesFromBrowser = ""
+        model = ""
+        temperature = ""
+        maxOutputTokens = ""
+        effort = ""
+        verbosity = ""
+        scriptVerbosity = ""
+        llmVerbosity = ""
+        promptFile = ""
+        useDefaultConfig = false
+        configFile = ""
+
+        skipDownload = false
+        skipSubs = false
+        skipScreenshots = false
+        skipLLM = false
+        skipPDF = false
+        fromStep = ""
+        forceAll = false
+
+        keepIntermediateSrts = false
+        keepRawJSON = false
+        keepTemp = false
+        nonInteractive = false
+        dryRun = false
+        manual = false
+    }
+
+    private func updateToolbarHelp(_ text: String, phase: HoverPhase) {
+        switch phase {
+        case .active(let location):
+            hoveredToolbarHelpLocation = location
+            guard pendingToolbarHelpText != text else { return }
+
+            hoveredToolbarHelpTask?.cancel()
+            pendingToolbarHelpText = text
+            hoveredToolbarHelpText = ""
+            hoveredToolbarHelpTask = Task {
+                try? await Task.sleep(for: .milliseconds(520))
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    if pendingToolbarHelpText == text {
+                        hoveredToolbarHelpText = text
+                    }
+                }
+            }
+        case .ended:
+            hoveredToolbarHelpTask?.cancel()
+            hoveredToolbarHelpTask = nil
+            pendingToolbarHelpText = ""
+            hoveredToolbarHelpText = ""
+        }
     }
 
     private func pickFilePath() -> String? {
@@ -1011,6 +1138,7 @@ private struct IconOnlyButton: View {
     let helpText: String
     var tint: Color = .primary
     let action: () -> Void
+    var onHoverChanged: (HoverPhase) -> Void = { _ in }
     @State private var isHovering = false
     @State private var isPressed = false
 
@@ -1032,11 +1160,39 @@ private struct IconOnlyButton: View {
                 .onChanged { _ in isPressed = true }
                 .onEnded { _ in isPressed = false }
         )
-        .onHover { hovering in
-            isHovering = hovering
+        .onContinuousHover(coordinateSpace: .named("ContentViewSpace")) { phase in
+            switch phase {
+            case .active:
+                isHovering = true
+            case .ended:
+                isHovering = false
+            }
+            onHoverChanged(phase)
         }
         .animation(.easeOut(duration: 0.14), value: isHovering)
         .animation(.easeOut(duration: 0.1), value: isPressed)
+    }
+}
+
+private struct PointerTooltip: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(Color.white.opacity(0.96))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color.black.opacity(0.82))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.18), radius: 8, y: 3)
+            .fixedSize()
     }
 }
 
