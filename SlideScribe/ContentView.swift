@@ -207,7 +207,9 @@ struct ContentView: View {
                             .padding(.vertical, 13)
                     }
                     .frame(minHeight: 132)
-                    .background(commandBackgroundColor)
+                    .background(
+                        GlassPanelBackground(colorScheme: colorScheme, cornerRadius: 14)
+                    )
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14)
@@ -305,13 +307,8 @@ struct ContentView: View {
         }
     }
 
-    private var commandBackgroundColor: Color {
-        Color(nsColor: colorScheme == .dark ? .textBackgroundColor : .controlBackgroundColor)
-            .opacity(colorScheme == .dark ? 0.94 : 0.98)
-    }
-
     private var commandBorderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
+        colorScheme == .dark ? Color.white.opacity(0.12) : Color.white.opacity(0.28)
     }
 
     private var outputFolderDisplayName: String {
@@ -820,16 +817,12 @@ private struct OutputDropZone: View {
         }
         .frame(maxWidth: .infinity, minHeight: 162)
         .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(
-                    Color(nsColor: colorScheme == .dark ? .underPageBackgroundColor : .controlBackgroundColor)
-                        .opacity(colorScheme == .dark ? 0.7 : 0.9)
-                )
+            GlassPanelBackground(colorScheme: colorScheme, cornerRadius: 14)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14)
                 .stroke(
-                    isTargeted ? Color.accentColor.opacity(0.72) : Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06),
+                    isTargeted ? Color.accentColor.opacity(0.72) : Color.white.opacity(colorScheme == .dark ? 0.12 : 0.26),
                     lineWidth: isTargeted ? 1.5 : 1
                 )
         )
@@ -1193,6 +1186,25 @@ private struct PointerTooltip: View {
             )
             .shadow(color: Color.black.opacity(0.18), radius: 8, y: 3)
             .fixedSize()
+    }
+}
+
+private struct GlassPanelBackground: View {
+    let colorScheme: ColorScheme
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        ZStack {
+            VisualEffectBackdrop(material: .sidebar, blendingMode: .withinWindow)
+
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(
+                    colorScheme == .dark
+                        ? Color.white.opacity(0.045)
+                        : Color.white.opacity(0.18)
+                )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
     }
 }
 
