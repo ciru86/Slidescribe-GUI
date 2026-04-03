@@ -13,6 +13,8 @@ struct SlideScribeApp: App {
         WindowGroup {
             ContentView()
         }
-        .defaultSize(width: 640, height: 560)
+        .defaultSize(width: 980, height: 690)
+        .restorationBehavior(.disabled)
+        .windowStyle(.hiddenTitleBar)
     }
 }

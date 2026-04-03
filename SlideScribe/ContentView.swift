@@ -1,33 +1,39 @@
-//
-//  ContentView.swift
-//  SlideScribe
-//
-//  Created by Pier Paolo Cirulli on 28/03/26.
-//
-
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
 struct ContentView: View {
+    private let floatingSidebarWidth: CGFloat = 350
+
+    private enum VideoInputMode: String, CaseIterable, Identifiable {
+        case youtubeURL
+        case localFile
+
+        var id: Self { self }
+    }
+
+    private enum RightPanelMode {
+        case terminal
+        case options
+        case manual
+    }
+
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var outputFolderPath: String = ""
+    @State private var videoInputMode: VideoInputMode = .youtubeURL
     @State private var inputURL: String = ""
+    @State private var inputMKV: String = ""
     @State private var generatedCommand: String = ""
     @State private var feedbackMessage: String = ""
     @State private var executionErrorMessage: String = ""
     @State private var showExecutionError: Bool = false
-    @State private var showOptionsWindow: Bool = false
+    @State private var rightPanelMode: RightPanelMode = .terminal
     @State private var isDropTargeted: Bool = false
     @State private var isDropHovered: Bool = false
-    @State private var hoveredToolbarHelpText: String = ""
-    @State private var pendingToolbarHelpText: String = ""
-    @State private var hoveredToolbarHelpLocation: CGPoint = .zero
-    @State private var hoveredToolbarHelpTask: Task<Void, Never>?
+    @State private var isVideoFileDropTargeted: Bool = false
 
     @State private var executionLog: String = ""
-    @State private var showExecutionLogWindow: Bool = false
     @State private var executionStatus: String = "Idle"
     @State private var runningProcess: Process?
     @State private var isRunning: Bool = false
@@ -36,10 +42,12 @@ struct ContentView: View {
     @State private var lessonTopic: String = ""
     @State private var terminologyContext: String = ""
     @State private var terminologyFile: String = ""
-    @State private var roiMode: String = "separate"
+    @State private var roiMode: String = "shared"
     @State private var enhanceSlide: Bool = true
     @State private var enhancePreset: String = ""
     @State private var chunkSize: String = ""
+    @State private var skipFirstSec: String = ""
+    @State private var skipLastSec: String = ""
     @State private var subLangs: String = ""
     @State private var ytdlpMode: String = ""
     @State private var cookiesFromBrowser: String = ""
@@ -62,244 +70,32 @@ struct ContentView: View {
     @State private var fromStep: String = ""
     @State private var forceAll: Bool = false
 
-    @State private var keepIntermediateSrts: Bool = false
-    @State private var keepRawJSON: Bool = false
-    @State private var keepTemp: Bool = false
-    @State private var nonInteractive: Bool = false
+    @State private var deleteIntermediateSrts: Bool = false
+    @State private var deleteRawJSON: Bool = false
+    @State private var deleteTemp: Bool = false
     @State private var dryRun: Bool = false
     @State private var manual: Bool = false
+    @State private var manualOutput: String = ""
+    @State private var manualStatus: String = "Ready"
+    @State private var isManualLoading: Bool = false
+    @State private var manualProcess: Process?
 
     var body: some View {
-        ZStack {
-            VisualEffectBackdrop(material: .windowBackground, blendingMode: .behindWindow)
+        ZStack(alignment: .topLeading) {
+            WindowBackground()
                 .ignoresSafeArea()
 
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    ToolbarPill {
-                        IconOnlyButton(icon: "gearshape", helpText: "Opzioni") {
-                            showOptionsWindow = true
-                        } onHoverChanged: { phase in
-                            updateToolbarHelp("Opzioni", phase: phase)
-                        }
-                    }
+            mainPanel
+                .padding(.leading, floatingSidebarWidth + 38)
+                .padding(.trailing, 18)
+                .padding(.vertical, 18)
 
-                    Spacer(minLength: 0)
-
-                    ToolbarPill {
-                        IconOnlyButton(icon: "nosign", helpText: "Azzera impostazioni, workdir e URL") {
-                            resetInputs()
-                        } onHoverChanged: { phase in
-                            updateToolbarHelp("Azzera impostazioni, workdir e URL", phase: phase)
-                        }
-                    }
-
-                    ToolbarPill {
-                        IconOnlyButton(icon: "eye", helpText: "Mostra workdir nel Finder") {
-                            openWorkdirInFinder()
-                        } onHoverChanged: { phase in
-                            updateToolbarHelp("Mostra workdir nel Finder", phase: phase)
-                        }
-                        .disabled(workdirValidationMessage != nil)
-                    }
-
-                    ToolbarPill {
-                        IconOnlyButton(icon: "folder", helpText: "Scegli o crea workdir") {
-                            pickOutputFolder()
-                        } onHoverChanged: { phase in
-                            updateToolbarHelp("Scegli o crea workdir", phase: phase)
-                        }
-                    }
-                }
-                .padding(.bottom, 2)
-
-                OutputDropZone(
-                    title: outputFolderDisplayName,
-                    subtitle: outputFolderSubtitle,
-                    isTargeted: isDropTargeted,
-                    isHovered: isDropHovered
-                )
-                .onHover { hovering in
-                    isDropHovered = hovering
-                }
-                .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
-                    handleDrop(providers: providers)
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("YouTube URL")
-                        .font(.headline.weight(.semibold))
-
-                    TextField("https://www.youtube.com/watch?v=...", text: $inputURL)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled(true)
-
-                    if let urlValidationMessage {
-                        ValidationMessage(text: urlValidationMessage)
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    Button {
-                        runCommand()
-                    } label: {
-                        Label(isRunning ? "Running..." : "Run", systemImage: isRunning ? "hourglass" : "play.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-                    .buttonBorderShape(.roundedRectangle(radius: 10))
-                    .disabled(isRunning || workdirValidationMessage != nil || urlValidationMessage != nil)
-
-                    Button {
-                        generateCommand()
-                    } label: {
-                        Label("Generate", systemImage: "doc.on.doc")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-                    .buttonBorderShape(.roundedRectangle(radius: 10))
-                    .disabled(workdirValidationMessage != nil || urlValidationMessage != nil)
-
-                    Button {
-                        showExecutionLogWindow = true
-                    } label: {
-                        Label("Log", systemImage: "terminal")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-                    .buttonBorderShape(.roundedRectangle(radius: 10))
-                    .disabled(executionLog.isEmpty && !isRunning)
-
-                    if isRunning {
-                        Button(role: .destructive) {
-                            stopRunningProcess()
-                        } label: {
-                            Label("Stop", systemImage: "stop.fill")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.regular)
-                        .buttonBorderShape(.roundedRectangle(radius: 10))
-                    }
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.top, 2)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Command")
-                            .font(.headline.weight(.semibold))
-
-                        Spacer(minLength: 0)
-
-                        Text("Preview")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    ScrollView {
-                        Text(generatedCommand.isEmpty ? "Il comando generato verrà visualizzato qui ed eseguito direttamente dall'app." : generatedCommand)
-                            .font(.system(size: 12.5, weight: .regular, design: .monospaced))
-                            .foregroundStyle(generatedCommand.isEmpty ? Color.secondary : Color.primary.opacity(0.96))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 13)
-                    }
-                    .frame(minHeight: 132)
-                    .background(
-                        GlassPanelBackground(colorScheme: colorScheme, cornerRadius: 14)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(commandBorderColor, lineWidth: 1)
-                    )
-                    .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.16 : 0.04), radius: 8, y: 3)
-
-                    StatusRow(
-                        statusText: executionStatus,
-                        detailText: feedbackMessage,
-                        isRunning: isRunning
-                    )
-                }
-            }
-            .padding(.horizontal, 18)
-            .padding(.bottom, 18)
-            .padding(.top, 2)
-
-            GeometryReader { proxy in
-                if !hoveredToolbarHelpText.isEmpty {
-                    PointerTooltip(text: hoveredToolbarHelpText)
-                        .position(
-                            x: min(max(hoveredToolbarHelpLocation.x + 20, 90), proxy.size.width - 120),
-                            y: min(hoveredToolbarHelpLocation.y + 28, proxy.size.height - 24)
-                        )
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
-                }
-            }
+            sidebar
+                .padding(.leading, 18)
+                .padding(.top, 18)
+                .padding(.bottom, 18)
         }
-        .coordinateSpace(name: "ContentViewSpace")
-        .frame(width: 640, height: 560, alignment: .topLeading)
-        .sheet(isPresented: $showOptionsWindow) {
-            OptionsSheet(
-                videoBasename: $videoBasename,
-                lessonTopic: $lessonTopic,
-                terminologyContext: $terminologyContext,
-                terminologyFile: $terminologyFile,
-                roiMode: $roiMode,
-                enhanceSlide: $enhanceSlide,
-                enhancePreset: $enhancePreset,
-                chunkSize: $chunkSize,
-                subLangs: $subLangs,
-                ytdlpMode: $ytdlpMode,
-                cookiesFromBrowser: $cookiesFromBrowser,
-                model: $model,
-                temperature: $temperature,
-                maxOutputTokens: $maxOutputTokens,
-                effort: $effort,
-                verbosity: $verbosity,
-                scriptVerbosity: $scriptVerbosity,
-                llmVerbosity: $llmVerbosity,
-                promptFile: $promptFile,
-                useDefaultConfig: $useDefaultConfig,
-                configFile: $configFile,
-                skipDownload: $skipDownload,
-                skipSubs: $skipSubs,
-                skipScreenshots: $skipScreenshots,
-                skipLLM: $skipLLM,
-                skipPDF: $skipPDF,
-                fromStep: $fromStep,
-                forceAll: $forceAll,
-                keepIntermediateSrts: $keepIntermediateSrts,
-                keepRawJSON: $keepRawJSON,
-                keepTemp: $keepTemp,
-                nonInteractive: $nonInteractive,
-                dryRun: $dryRun,
-                manual: $manual,
-                onPickTerminologyFile: {
-                    terminologyFile = pickFilePath() ?? terminologyFile
-                },
-                onPickPromptFile: {
-                    promptFile = pickFilePath() ?? promptFile
-                },
-                onPickConfigFile: {
-                    configFile = pickFilePath() ?? configFile
-                }
-            )
-        }
-        .sheet(isPresented: $showExecutionLogWindow) {
-            ExecutionLogSheet(
-                isPresented: $showExecutionLogWindow,
-                logText: $executionLog,
-                statusText: executionStatus,
-                isRunning: isRunning,
-                onStop: stopRunningProcess,
-                onCopy: copyExecutionLog,
-                onClear: clearExecutionLog
-            )
-        }
+        .frame(minWidth: 835, minHeight: 620)
         .alert("Errore esecuzione", isPresented: $showExecutionError) {
             Button("OK", role: .cancel) { }
         } message: {
@@ -307,58 +103,600 @@ struct ContentView: View {
         }
     }
 
-    private var commandBorderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.12) : Color.white.opacity(0.28)
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 24) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Spacer(minLength: 0)
+
+                        HStack(spacing: 4) {
+                            SidebarUtilityIconButton(
+                                icon: "eye",
+                                title: "Reveal in Finder",
+                                tint: .primary,
+                                isEnabled: !outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && workdirValidationMessage == nil
+                            ) {
+                                openWorkdirInFinder()
+                            }
+
+                            SidebarUtilityIconButton(icon: "folder", title: "Choose working directory", tint: .primary) {
+                                pickOutputFolder()
+                            }
+
+                            SidebarUtilityIconButton(icon: "slider.horizontal.3", title: "Options", tint: .primary) {
+                                rightPanelMode = .options
+                            }
+
+                            SidebarUtilityIconButton(icon: "arrow.counterclockwise", title: "Reset", tint: .primary) {
+                                resetInputs()
+                            }
+
+                            SidebarUtilityIconButton(icon: "questionmark", title: "Show SlideScribe manual", tint: .primary) {
+                                showManualPanel()
+                            }
+                        }
+                    }
+                    .padding(.bottom, 6)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        SectionLabel(title: "Input video", subtitle: "Choose a YouTube link or a local MKV file for the workflow.")
+
+                        Picker("Video source", selection: $videoInputMode) {
+                            Text("YouTube URL").tag(VideoInputMode.youtubeURL)
+                            Text("Local file").tag(VideoInputMode.localFile)
+                        }
+                        .pickerStyle(.radioGroup)
+                        .labelsHidden()
+                        .font(.system(size: 12.5))
+
+                        if videoInputMode == .youtubeURL {
+                            TextField("Paste YouTube URL", text: $inputURL)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 12.5))
+                                .autocorrectionDisabled(true)
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 9)
+                                        .fill(inputBackgroundColor)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 9)
+                                        .stroke(videoInputFieldBorderColor, lineWidth: 1)
+                                )
+                        } else {
+                            HStack(spacing: 8) {
+                                Text(inputMKVDisplayText)
+                                    .font(.system(size: 12.5))
+                                    .foregroundStyle(inputMKV.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary : Color.primary.opacity(0.9))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                Button("Choose…") {
+                                    pickInputMKV()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 9)
+                                    .fill(colorScheme == .dark ? Color.white.opacity(0.075) : Color.white.opacity(0.86))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 9)
+                                    .stroke(videoInputFieldBorderColor, lineWidth: 1)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 9)
+                                    .stroke(Color.accentColor.opacity(isVideoFileDropTargeted ? 0.55 : 0), lineWidth: 1.5)
+                            )
+                            .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isVideoFileDropTargeted) { providers in
+                                handleInputMKVDrop(providers: providers)
+                            }
+                        }
+
+                        if shouldShowVideoInputWarning {
+                            WarningMessage(text: activeVideoInputValidationMessage ?? "Invalid input")
+                        }
+                    }
+
+                    Spacer(minLength: 2)
+
+                    VStack(spacing: 8) {
+                        Button {
+                            runCommand()
+                        } label: {
+                            Label(isRunning ? "Running…" : "Run workflow", systemImage: isRunning ? "hourglass" : "play.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 2)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                        .buttonBorderShape(.roundedRectangle(radius: 10))
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(isRunning || workdirValidationMessage != nil || activeVideoInputValidationMessage != nil)
+
+                        Button {
+                            generateCommand()
+                        } label: {
+                            Label("Generate command", systemImage: "wand.and.stars")
+                                .font(.system(size: 12.5, weight: .medium))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                        .buttonBorderShape(.roundedRectangle(radius: 10))
+                        .tint(.secondary)
+                        .opacity(workdirValidationMessage != nil || activeVideoInputValidationMessage != nil ? 0.68 : 0.88)
+                        .disabled(workdirValidationMessage != nil || activeVideoInputValidationMessage != nil)
+
+                        if isRunning {
+                            Button(role: .destructive) {
+                                stopRunningProcess()
+                            } label: {
+                                Label("Stop process", systemImage: "stop.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.regular)
+                            .buttonBorderShape(.roundedRectangle(radius: 10))
+                        }
+                    }
+
+                    Spacer(minLength: 12)
+
+                    compactCommandPreview
+
+                    Spacer(minLength: 12)
+                }
+                .padding(20)
+                .frame(maxHeight: .infinity, alignment: .top)
+            }
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 10) {
+                StatusBadge(statusText: executionStatus, isRunning: isRunning)
+
+                if !feedbackMessage.isEmpty {
+                    Text(feedbackMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+        }
+        .frame(width: floatingSidebarWidth, alignment: .top)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(
+            SidebarSurface(colorScheme: colorScheme)
+        )
+        .onHover { hovering in
+            isDropHovered = hovering
+        }
+        .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
+            handleDrop(providers: providers)
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 28)
+                .stroke(sidebarStrokeColor, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 28))
+        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.22 : 0.08), radius: 18, y: 8)
+    }
+
+    private var mainPanel: some View {
+        ZStack {
+            if rightPanelMode == .options {
+                optionsPanel
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else if rightPanelMode == .manual {
+                manualPanel
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else {
+                terminalCard
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.22), value: rightPanelMode)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var optionsPanel: some View {
+        OptionsSheet(
+            videoBasename: $videoBasename,
+            lessonTopic: $lessonTopic,
+            terminologyContext: $terminologyContext,
+            terminologyFile: $terminologyFile,
+            roiMode: $roiMode,
+            enhanceSlide: $enhanceSlide,
+            enhancePreset: $enhancePreset,
+            chunkSize: $chunkSize,
+            skipFirstSec: $skipFirstSec,
+            skipLastSec: $skipLastSec,
+            subLangs: $subLangs,
+            ytdlpMode: $ytdlpMode,
+            cookiesFromBrowser: $cookiesFromBrowser,
+            model: $model,
+            temperature: $temperature,
+            maxOutputTokens: $maxOutputTokens,
+            effort: $effort,
+            verbosity: $verbosity,
+            scriptVerbosity: $scriptVerbosity,
+            llmVerbosity: $llmVerbosity,
+            promptFile: $promptFile,
+            useDefaultConfig: $useDefaultConfig,
+            configFile: $configFile,
+            skipDownload: $skipDownload,
+            skipSubs: $skipSubs,
+            skipScreenshots: $skipScreenshots,
+            skipLLM: $skipLLM,
+            skipPDF: $skipPDF,
+            fromStep: $fromStep,
+            forceAll: $forceAll,
+            deleteIntermediateSrts: $deleteIntermediateSrts,
+            deleteRawJSON: $deleteRawJSON,
+            deleteTemp: $deleteTemp,
+            dryRun: $dryRun,
+            manual: $manual,
+            onPickTerminologyFile: {
+                terminologyFile = pickFilePath() ?? terminologyFile
+            },
+            onPickPromptFile: {
+                promptFile = pickFilePath() ?? promptFile
+            },
+            onPickConfigFile: {
+                configFile = pickFilePath() ?? configFile
+            },
+            onReset: {
+                resetOptions()
+            },
+            onClose: {
+                rightPanelMode = .terminal
+            }
+        )
+    }
+
+    private var manualPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                PanelHeader(
+                    title: "Manual",
+                    subtitle: isManualLoading ? "Loading slidescribe --manual..." : manualStatus
+                )
+
+                Spacer()
+
+                HStack(spacing: 8) {
+                    Button {
+                        copyManualOutput()
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(PanelToolbarIconButtonStyle())
+                    .disabled(manualOutput.isEmpty)
+                    .help("Copy manual output")
+
+                    Button {
+                        loadManualContent()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(PanelToolbarIconButtonStyle())
+                    .disabled(isManualLoading)
+                    .help("Reload manual")
+
+                    Button {
+                        rightPanelMode = .terminal
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(PanelToolbarIconButtonStyle())
+                    .help("Close manual")
+                }
+            }
+            .padding(.horizontal, 8)
+
+            Rectangle()
+                .fill(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06))
+                .frame(height: 1)
+                .padding(.horizontal, 8)
+
+            ScrollView {
+                Text(manualOutput.isEmpty ? "SlideScribe manual output will appear here." : manualOutput)
+                    .font(.system(size: 13.5, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(18)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var compactCommandPreview: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Command preview")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary.opacity(0.68))
+
+            ScrollView {
+                Text(generatedCommand.isEmpty ? "The generated command will appear here once the input is valid or after pressing Generate command." : generatedCommand)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundStyle(generatedCommand.isEmpty ? Color.secondary : Color.primary.opacity(0.92))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(11)
+            }
+            .frame(minHeight: 76, maxHeight: 96)
+            .background(compactCommandWell)
+        }
+    }
+
+    private var terminalCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                PanelHeader(
+                    title: "Terminal",
+                    subtitle: isRunning ? "Streaming live process output." : "Live process output and command logs."
+                )
+
+                Spacer()
+
+                HStack(spacing: 8) {
+                    Button {
+                        copyExecutionLog()
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(PanelToolbarIconButtonStyle())
+                    .disabled(executionLog.isEmpty)
+                    .help("Copy terminal output")
+
+                    Button {
+                        clearExecutionLog()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(PanelToolbarIconButtonStyle())
+                    .disabled(isRunning || executionLog.isEmpty)
+                    .help("Clear terminal output")
+                }
+            }
+            .padding(.horizontal, 8)
+
+            Rectangle()
+                .fill(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06))
+                .frame(height: 1)
+                .padding(.horizontal, 8)
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(executionLog.isEmpty ? terminalPlaceholder : executionLog)
+                        .font(.system(size: 13.5, weight: .regular, design: .monospaced))
+                        .foregroundStyle(executionLog.isEmpty ? Color.secondary : terminalForegroundColor)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(18)
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id("BOTTOM")
+                }
+                .onAppear {
+                    proxy.scrollTo("BOTTOM", anchor: .bottom)
+                }
+                .onChange(of: executionLog) { _, _ in
+                    proxy.scrollTo("BOTTOM", anchor: .bottom)
+                }
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var terminalPlaceholder: String {
+        """
+        SlideScribe terminal is ready.
+
+        - Choose a working directory in the sidebar
+        - Paste a valid YouTube URL or choose a local MKV in Options
+        - Generate the command or run the workflow
+
+        Live process output will stream here.
+        """
     }
 
     private var outputFolderDisplayName: String {
         if outputFolderPath.isEmpty {
-            return "Drop Working Directory Here"
+            return "Choose Working Directory"
         }
         return URL(fileURLWithPath: outputFolderPath).lastPathComponent
     }
 
-    private var outputFolderSubtitle: String {
+    private var outputFolderHeroSubtitle: String {
         if let workdirValidationMessage {
             return workdirValidationMessage
         }
-        return outputFolderPath
+        return "Project workspace ready"
+    }
+
+    private var statusBadgeText: String {
+        ExecutionStatusPresentation(statusText: executionStatus, isRunning: isRunning).label
     }
 
     private var workdirValidationMessage: String? {
         let trimmed = outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            return "Scegli o trascina una cartella di lavoro"
+            return nil
         }
 
         var isDirectory: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: trimmed, isDirectory: &isDirectory)
         if !exists || !isDirectory.boolValue {
-            return "La workdir deve essere una cartella valida"
+            return "The workdir must be an existing folder"
         }
 
         return nil
     }
 
     private var requiresYouTubeURL: Bool {
-        !(skipDownload && skipSubs)
+        videoInputMode == .youtubeURL && !(skipDownload && skipSubs)
+    }
+
+    private var inputMKVValidationMessage: String? {
+        let trimmed = inputMKV.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: trimmed, isDirectory: &isDirectory)
+        if !exists || isDirectory.boolValue {
+            return "The selected MKV file is no longer available"
+        }
+
+        if URL(fileURLWithPath: trimmed).pathExtension.lowercased() != "mkv" {
+            return "Choose a valid MKV file"
+        }
+
+        return nil
     }
 
     private var urlValidationMessage: String? {
+        guard videoInputMode == .youtubeURL else { return nil }
+
         let trimmed = inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            return requiresYouTubeURL ? "Inserisci un URL YouTube" : nil
+            return requiresYouTubeURL ? "Paste a valid YouTube URL" : nil
         }
 
         guard let url = URL(string: trimmed), let host = url.host?.lowercased() else {
-            return "URL non valido"
+            return "Invalid URL"
         }
 
         if host.contains("youtube.com") || host.contains("youtu.be") {
             return nil
         }
 
-        return "Inserisci un URL YouTube valido"
+        return "Use a YouTube URL"
+    }
+
+    private var activeVideoInputValidationMessage: String? {
+        switch videoInputMode {
+        case .youtubeURL:
+            return urlValidationMessage
+        case .localFile:
+            let trimmed = inputMKV.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                return "Choose a local MKV file"
+            }
+            return inputMKVValidationMessage
+        }
+    }
+
+    private var shouldShowWorkdirWarning: Bool {
+        !outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && workdirValidationMessage != nil
+    }
+
+    private var shouldShowVideoInputWarning: Bool {
+        switch videoInputMode {
+        case .youtubeURL:
+            return !inputURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && urlValidationMessage != nil
+        case .localFile:
+            return !inputMKV.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && inputMKVValidationMessage != nil
+        }
+    }
+
+    private var inputBackgroundColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.82)
+    }
+
+    private var videoInputFieldBorderColor: Color {
+        let isInvalid: Bool
+        switch videoInputMode {
+        case .youtubeURL:
+            isInvalid = !inputURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && urlValidationMessage != nil
+        case .localFile:
+            isInvalid = !inputMKV.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && inputMKVValidationMessage != nil
+        }
+
+        if !isInvalid {
+            return colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
+        }
+        return Color.orange.opacity(0.35)
+    }
+
+    private var inputMKVDisplayText: String {
+        let trimmed = inputMKV.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "No file selected" }
+        return trimmed
+    }
+
+    private var workdirFieldBorderColor: Color {
+        if workdirValidationMessage == nil || outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
+        }
+        return Color.orange.opacity(0.35)
+    }
+
+    private var sidebarStrokeColor: Color {
+        if isDropTargeted {
+            return Color.accentColor.opacity(0.55)
+        }
+
+        return colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.42)
+    }
+
+    private var commandWell: some View {
+        RoundedRectangle(cornerRadius: 18)
+            .fill(colorScheme == .dark ? Color.white.opacity(0.05) : Color.white.opacity(0.78))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(colorScheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.06), lineWidth: 1)
+            )
+    }
+
+    private var compactCommandWell: some View {
+        RoundedRectangle(cornerRadius: 14)
+            .fill(colorScheme == .dark ? Color.black.opacity(0.18) : Color.white.opacity(0.22))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08), lineWidth: 1)
+            )
+    }
+
+    private var terminalWell: some View {
+        RoundedRectangle(cornerRadius: 20)
+            .fill(terminalBackgroundColor)
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(terminalStrokeColor, lineWidth: 1)
+            )
+    }
+
+    private var terminalBackgroundColor: Color {
+        colorScheme == .dark
+            ? Color.black.opacity(0.32)
+            : Color.black.opacity(0.90)
+    }
+
+    private var terminalStrokeColor: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.08)
+            : Color.white.opacity(0.07)
+    }
+
+    private var terminalForegroundColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.92) : Color.black.opacity(0.82)
     }
 
     private func pickOutputFolder() {
@@ -367,7 +705,7 @@ struct ContentView: View {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "Scegli cartella"
+        panel.prompt = "Choose folder"
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         outputFolderPath = url.path
@@ -383,23 +721,26 @@ struct ContentView: View {
 
     private func resetInputs() {
         outputFolderPath = ""
+        videoInputMode = .youtubeURL
         inputURL = ""
         generatedCommand = ""
         feedbackMessage = ""
-        hoveredToolbarHelpText = ""
-        pendingToolbarHelpText = ""
-        hoveredToolbarHelpLocation = .zero
-        hoveredToolbarHelpTask?.cancel()
-        hoveredToolbarHelpTask = nil
 
+        resetOptions()
+    }
+
+    private func resetOptions() {
         videoBasename = ""
         lessonTopic = ""
         terminologyContext = ""
         terminologyFile = ""
-        roiMode = "separate"
+        inputMKV = ""
+        roiMode = "shared"
         enhanceSlide = true
         enhancePreset = ""
         chunkSize = ""
+        skipFirstSec = ""
+        skipLastSec = ""
         subLangs = ""
         ytdlpMode = ""
         cookiesFromBrowser = ""
@@ -422,38 +763,12 @@ struct ContentView: View {
         fromStep = ""
         forceAll = false
 
-        keepIntermediateSrts = false
-        keepRawJSON = false
-        keepTemp = false
-        nonInteractive = false
+        deleteIntermediateSrts = false
+        deleteRawJSON = false
+        deleteTemp = false
         dryRun = false
         manual = false
-    }
-
-    private func updateToolbarHelp(_ text: String, phase: HoverPhase) {
-        switch phase {
-        case .active(let location):
-            hoveredToolbarHelpLocation = location
-            guard pendingToolbarHelpText != text else { return }
-
-            hoveredToolbarHelpTask?.cancel()
-            pendingToolbarHelpText = text
-            hoveredToolbarHelpText = ""
-            hoveredToolbarHelpTask = Task {
-                try? await Task.sleep(for: .milliseconds(520))
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    if pendingToolbarHelpText == text {
-                        hoveredToolbarHelpText = text
-                    }
-                }
-            }
-        case .ended:
-            hoveredToolbarHelpTask?.cancel()
-            hoveredToolbarHelpTask = nil
-            pendingToolbarHelpText = ""
-            hoveredToolbarHelpText = ""
-        }
+        videoInputMode = .youtubeURL
     }
 
     private func pickFilePath() -> String? {
@@ -462,6 +777,47 @@ struct ContentView: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         return panel.runModal() == .OK ? panel.url?.path : nil
+    }
+
+    private func pickInputMKV() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = UTType(filenameExtension: "mkv").map { [$0] } ?? []
+
+        guard panel.runModal() == .OK, let path = panel.url?.path else {
+            return
+        }
+
+        videoInputMode = .localFile
+        inputMKV = path
+    }
+
+    private func handleInputMKVDrop(providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
+            return false
+        }
+
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+            guard let data = item as? Data,
+                  let url = URL(dataRepresentation: data, relativeTo: nil) else {
+                return
+            }
+
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            guard exists, !isDirectory.boolValue, url.pathExtension.lowercased() == "mkv" else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                videoInputMode = .localFile
+                inputMKV = url.path
+            }
+        }
+
+        return true
     }
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
@@ -489,17 +845,17 @@ struct ContentView: View {
     }
 
     private func runCommand() {
-        guard workdirValidationMessage == nil, urlValidationMessage == nil else {
-            feedbackMessage = "Correggi workdir e URL prima di eseguire il comando."
+        guard workdirValidationMessage == nil, activeVideoInputValidationMessage == nil else {
+            feedbackMessage = "Fix the workdir or video input before running."
             return
         }
 
+        rightPanelMode = .terminal
         generatedCommand = buildCommandString()
         executionLog = ""
         executionStatus = "Running"
         isRunning = true
-        showExecutionLogWindow = true
-        feedbackMessage = "Esecuzione in corso..."
+        feedbackMessage = "Execution in progress…"
 
         appendToLog("$ \(generatedCommand)\n\n")
 
@@ -518,13 +874,13 @@ struct ContentView: View {
 
                     if exitCode == 0 {
                         executionStatus = "Finished successfully"
-                        feedbackMessage = "Comando completato."
+                        feedbackMessage = "Command completed."
                     } else if exitCode == 15 {
                         executionStatus = "Stopped"
-                        feedbackMessage = "Esecuzione interrotta."
+                        feedbackMessage = "Execution interrupted."
                     } else {
                         executionStatus = "Failed (exit \(exitCode))"
-                        feedbackMessage = "Comando terminato con errore."
+                        feedbackMessage = "Command failed."
                     }
 
                     appendToLog("\n\n[Process finished with exit code \(exitCode)]\n")
@@ -536,14 +892,14 @@ struct ContentView: View {
             executionStatus = "Launch failed"
             executionErrorMessage = error.localizedDescription
             showExecutionError = true
-            feedbackMessage = "Esecuzione fallita."
+            feedbackMessage = "Launch failed."
             appendToLog("\n[Launch error] \(error.localizedDescription)\n")
         }
     }
 
     private func generateCommand() {
-        guard workdirValidationMessage == nil, urlValidationMessage == nil else {
-            feedbackMessage = "Correggi workdir e URL prima di generare il comando."
+        guard workdirValidationMessage == nil, activeVideoInputValidationMessage == nil else {
+            feedbackMessage = "Fix the workdir or video input before generating the command."
             return
         }
 
@@ -551,12 +907,12 @@ struct ContentView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(generatedCommand, forType: .string)
         executionStatus = isRunning ? executionStatus : "Idle"
-        feedbackMessage = "Comando generato e copiato negli appunti."
+        feedbackMessage = "Command generated and copied to the clipboard."
     }
 
     private func stopRunningProcess() {
         runningProcess?.terminate()
-        feedbackMessage = "Interruzione in corso..."
+        feedbackMessage = "Stopping process…"
     }
 
     private func appendToLog(_ text: String) {
@@ -574,6 +930,48 @@ struct ContentView: View {
         NSPasteboard.general.setString(executionLog, forType: .string)
     }
 
+    private func showManualPanel() {
+        rightPanelMode = .manual
+        if manualOutput.isEmpty && !isManualLoading {
+            loadManualContent()
+        }
+    }
+
+    private func loadManualContent() {
+        manualProcess?.terminate()
+        manualOutput = ""
+        manualStatus = "Loading manual..."
+        isManualLoading = true
+
+        do {
+            manualProcess = try TerminalExecutor.execute(command: "slidescribe --manual") { event in
+                switch event {
+                case .stdout(let text), .stderr(let text):
+                    manualOutput += text
+
+                case .finished(let exitCode):
+                    manualProcess = nil
+                    isManualLoading = false
+                    manualStatus = exitCode == 0 ? "slidescribe --manual" : "Manual failed (exit \(exitCode))"
+
+                    if exitCode != 0 && manualOutput.isEmpty {
+                        manualOutput = "[Process finished with exit code \(exitCode)]"
+                    }
+                }
+            }
+        } catch {
+            manualProcess = nil
+            isManualLoading = false
+            manualStatus = "Manual launch failed"
+            manualOutput = error.localizedDescription
+        }
+    }
+
+    private func copyManualOutput() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(manualOutput, forType: .string)
+    }
+
     private func buildCommandString() -> String {
         buildCommandComponents()
             .map(shellEscape)
@@ -582,9 +980,16 @@ struct ContentView: View {
 
     private func buildCommandComponents() -> [String] {
         var components = ["slidescribe"]
+        let localMKVPath = inputMKV.trimmingCharacters(in: .whitespacesAndNewlines)
+        let youtubeURL = inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
 
         appendOption("--workdir", value: outputFolderPath, to: &components)
-        appendOption("--youtube-url", value: inputURL, to: &components)
+        if videoInputMode == .youtubeURL, !youtubeURL.isEmpty {
+            appendOption("--youtube-url", value: youtubeURL, to: &components)
+        } else if videoInputMode == .localFile, !localMKVPath.isEmpty {
+            appendOption("--input-mkv", value: localMKVPath, to: &components)
+            components.append("--whisper")
+        }
         appendOption("--video-basename", value: videoBasename, to: &components)
         appendOption("--lesson-topic", value: lessonTopic, to: &components)
         appendOption("--terminology-context", value: terminologyContext, to: &components)
@@ -597,6 +1002,8 @@ struct ContentView: View {
 
         appendOption("--enhance-preset", value: enhancePreset, to: &components)
         appendOption("--chunk-size", value: chunkSize, to: &components)
+        appendOption("--skip-first-sec", value: skipFirstSec, to: &components)
+        appendOption("--skip-last-sec", value: skipLastSec, to: &components)
         appendOption("--sub-langs", value: subLangs, to: &components)
         appendOption("--ytdlp-mode", value: ytdlpMode, to: &components)
         appendOption("--cookies-from-browser", value: cookiesFromBrowser, to: &components)
@@ -615,45 +1022,20 @@ struct ContentView: View {
 
         appendOption("--config-file", value: configFile, to: &components)
 
-        if skipDownload {
-            components.append("--skip-download")
-        }
-        if skipSubs {
-            components.append("--skip-subs")
-        }
-        if skipScreenshots {
-            components.append("--skip-screenshots")
-        }
-        if skipLLM {
-            components.append("--skip-llm")
-        }
-        if skipPDF {
-            components.append("--skip-pdf")
-        }
+        if skipDownload { components.append("--skip-download") }
+        if skipSubs { components.append("--skip-subs") }
+        if skipScreenshots { components.append("--skip-screenshots") }
+        if skipLLM { components.append("--skip-llm") }
+        if skipPDF { components.append("--skip-pdf") }
 
         appendOption("--from-step", value: fromStep, to: &components)
 
-        if forceAll {
-            components.append("--force-all")
-        }
-        if keepIntermediateSrts {
-            components.append("--keep-intermediate-srts")
-        }
-        if keepRawJSON {
-            components.append("--keep-raw-json")
-        }
-        if keepTemp {
-            components.append("--keep-temp")
-        }
-        if nonInteractive {
-            components.append("--non-interactive")
-        }
-        if dryRun {
-            components.append("--dry-run")
-        }
-        if manual {
-            components.append("--manual")
-        }
+        if forceAll { components.append("--force-all") }
+        if deleteIntermediateSrts { components.append("--delete-intermediate-srts") }
+        if deleteRawJSON { components.append("--delete-raw-json") }
+        if deleteTemp { components.append("--delete-temp") }
+        if dryRun { components.append("--dry-run") }
+        if manual { components.append("--manual") }
 
         return components
     }
@@ -677,106 +1059,326 @@ struct ContentView: View {
     }
 }
 
-private struct ExecutionLogSheet: View {
-    @Environment(\.colorScheme) private var colorScheme
+private struct WindowBackground: View {
+    var body: some View {
+        ZStack {
+            VisualEffectBackdrop(material: .windowBackground, blendingMode: .behindWindow)
 
-    @Binding var isPresented: Bool
-    @Binding var logText: String
-    let statusText: String
-    let isRunning: Bool
-    let onStop: () -> Void
-    let onCopy: () -> Void
-    let onClear: () -> Void
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(0.18),
+                    Color.accentColor.opacity(0.04),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+    }
+}
+
+private struct SidebarSurface: View {
+    let colorScheme: ColorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Execution Log")
-                        .font(.title3.weight(.semibold))
+        ZStack {
+            VisualEffectBackdrop(material: .sidebar, blendingMode: .behindWindow)
 
-                    HStack(spacing: 10) {
-                        StatusBadge(statusText: statusText, isRunning: isRunning)
+            LinearGradient(
+                colors: colorScheme == .dark
+                ? [Color.white.opacity(0.045), Color.white.opacity(0.015)]
+                : [Color.white.opacity(0.16), Color.white.opacity(0.04)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
 
-                        Text(statusText)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+            Rectangle()
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.015 : 0.05))
+                .blendMode(.plusLighter)
+        }
+    }
+}
+
+private struct ContentCardBackground: View {
+    let colorScheme: ColorScheme
+    let emphasize: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 28)
+                .fill(colorScheme == .dark ? Color.white.opacity(0.045) : Color.white.opacity(emphasize ? 0.76 : 0.68))
+
+            RoundedRectangle(cornerRadius: 28)
+                .stroke(colorScheme == .dark ? Color.white.opacity(0.07) : Color.white.opacity(0.45), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.14 : 0.05), radius: 14, y: 6)
+    }
+}
+
+private struct SectionLabel: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 13.5, weight: .semibold))
+
+            Text(subtitle)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary.opacity(0.68))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct SidebarHeroCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let title: String
+    let subtitle: String
+    let pathText: String
+    let isTargeted: Bool
+    let isHovered: Bool
+    let isValid: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(isTargeted ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.06))
+                        .frame(width: 46, height: 46)
+
+                    Image(systemName: isValid ? "folder.fill" : "folder.badge.plus")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(isTargeted ? Color.accentColor : .primary)
                 }
 
-                Spacer()
+                Spacer(minLength: 0)
 
-                HStack(spacing: 8) {
-                    if isRunning {
-                        Button(role: .destructive) {
-                            onStop()
-                        } label: {
-                            Label("Stop", systemImage: "stop.fill")
-                        }
-                        .buttonStyle(.bordered)
-                        .buttonBorderShape(.roundedRectangle(radius: 10))
-                    }
-
-                    Button {
-                        onCopy()
-                    } label: {
-                        Label("Copy Log", systemImage: "doc.on.doc")
-                    }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.roundedRectangle(radius: 10))
-
-                    Button("Clear") {
-                        onClear()
-                    }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.roundedRectangle(radius: 10))
-                    .disabled(isRunning || logText.isEmpty)
-
-                    Button("Close") {
-                        isPresented = false
-                    }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.roundedRectangle(radius: 10))
-                    .disabled(isRunning)
+                if isValid {
+                    MiniStatusPill(text: "Ready", tint: .green)
+                } else {
+                    MiniStatusPill(text: "Required", tint: .orange)
                 }
             }
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    Text(logText.isEmpty ? "Nessun output ancora." : logText)
-                        .font(.system(size: 12.5, weight: .regular, design: .monospaced))
-                        .foregroundStyle(logText.isEmpty ? .secondary : .primary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 13)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(2)
 
-                    Color.clear
-                        .frame(height: 1)
-                        .id("BOTTOM")
-                }
-                
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(nsColor: colorScheme == .dark ? .textBackgroundColor : .controlBackgroundColor))
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08), lineWidth: 1)
-                )
-                .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.18 : 0.05), radius: 10, y: 4)
-                .onAppear {
-                    proxy.scrollTo("BOTTOM", anchor: .bottom)
-                }
-                .onChange(of: logText) { _, _ in
-                    proxy.scrollTo("BOTTOM", anchor: .bottom)
-                }
+                Text(subtitle)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !pathText.isEmpty {
+                Text(pathText)
+                    .font(.system(size: 11.5, weight: .regular, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(colorScheme == .dark ? Color.white.opacity(0.05) : Color.black.opacity(0.04))
+                    )
             }
         }
         .padding(18)
-        .frame(minWidth: 760, minHeight: 520)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(colorScheme == .dark ? Color.white.opacity(0.05) : Color.white.opacity(0.60))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24)
+                .stroke(isTargeted ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.06), lineWidth: isTargeted ? 1.5 : 1)
+        )
+        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.14 : 0.04), radius: 12, y: 5)
+        .scaleEffect(isTargeted ? 1.01 : (isHovered ? 1.004 : 1))
+        .animation(.easeOut(duration: 0.18), value: isTargeted)
+        .animation(.easeOut(duration: 0.16), value: isHovered)
+    }
+}
+
+private struct SidebarUtilityIconButton: View {
+    let icon: String
+    let title: String
+    let tint: Color
+    var isEnabled: Bool = true
+    let action: () -> Void
+
+    @State private var isHovering = false
+    @State private var isShowingTooltip = false
+    @State private var tooltipTask: DispatchWorkItem?
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isEnabled ? tint : .secondary)
+                .frame(width: 26, height: 26)
+                .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(SidebarIconButtonStyle())
+        .disabled(!isEnabled)
+        .overlay(alignment: .bottomTrailing) {
+            if isShowingTooltip {
+                TooltipBubble(text: title)
+                    .allowsHitTesting(false)
+                    .offset(x: 6, y: 32)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)))
+            }
+        }
+        .contentShape(Rectangle())
+        .zIndex(isShowingTooltip ? 1 : 0)
+        .onHover { hovering in
+            isHovering = hovering
+            tooltipTask?.cancel()
+
+            if hovering {
+                let task = DispatchWorkItem {
+                    guard isHovering else { return }
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        isShowingTooltip = true
+                    }
+                }
+                tooltipTask = task
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: task)
+            } else {
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isShowingTooltip = false
+                }
+            }
+        }
+        .onDisappear {
+            tooltipTask?.cancel()
+        }
+    }
+}
+
+private struct SidebarIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(configuration.isPressed ? Color.primary.opacity(0.07) : Color.primary.opacity(0.022))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(Color.primary.opacity(configuration.isPressed ? 0.08 : 0.035), lineWidth: 1)
+            )
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+private struct TooltipBubble: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11.5))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.regularMaterial)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.12), radius: 8, y: 4)
+            .fixedSize()
+    }
+}
+
+private struct PanelHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            Text(subtitle)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary.opacity(0.72))
+        }
+    }
+}
+
+private struct PanelToolbarIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold))
+            .frame(width: 28, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(configuration.isPressed ? Color.primary.opacity(0.08) : Color.primary.opacity(0.03))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.primary.opacity(configuration.isPressed ? 0.08 : 0.045), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+private struct MetricPill: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased())
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            Capsule()
+                .fill(.regularMaterial)
+        )
+        .overlay(
+            Capsule()
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+}
+
+private struct MiniStatusPill: View {
+    let text: String
+    let tint: Color
+
+    var body: some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(tint.opacity(0.12))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(tint.opacity(0.18), lineWidth: 1)
+            )
     }
 }
 
@@ -790,50 +1392,13 @@ private struct ValidationMessage: View {
     }
 }
 
-private struct OutputDropZone: View {
-    @Environment(\.colorScheme) private var colorScheme
-
-    let title: String
-    let subtitle: String
-    let isTargeted: Bool
-    let isHovered: Bool
+private struct WarningMessage: View {
+    let text: String
 
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "folder.badge.plus")
-                .font(.system(size: 32, weight: .regular))
-                .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary)
-
-            Text(title)
-                .font(.title3.weight(.semibold))
-
-            Text(subtitle)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
-        }
-        .frame(maxWidth: .infinity, minHeight: 162)
-        .background(
-            GlassPanelBackground(colorScheme: colorScheme, cornerRadius: 14)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(
-                    isTargeted ? Color.accentColor.opacity(0.72) : Color.white.opacity(colorScheme == .dark ? 0.12 : 0.26),
-                    lineWidth: isTargeted ? 1.5 : 1
-                )
-        )
-        .shadow(
-            color: isTargeted ? Color.accentColor.opacity(0.15) : Color.black.opacity(colorScheme == .dark ? 0.14 : 0.05),
-            radius: isTargeted ? 10 : 5,
-            y: isTargeted ? 5 : 2
-        )
-        .scaleEffect(isTargeted ? 1.006 : (isHovered ? 1.003 : 1.0))
-        .animation(.easeOut(duration: 0.18), value: isTargeted)
-        .animation(.easeOut(duration: 0.16), value: isHovered)
+        Label(text, systemImage: "exclamationmark.triangle.fill")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.red)
     }
 }
 
@@ -846,6 +1411,8 @@ private struct OptionsSheet: View {
     @Binding var enhanceSlide: Bool
     @Binding var enhancePreset: String
     @Binding var chunkSize: String
+    @Binding var skipFirstSec: String
+    @Binding var skipLastSec: String
     @Binding var subLangs: String
     @Binding var ytdlpMode: String
     @Binding var cookiesFromBrowser: String
@@ -868,365 +1435,445 @@ private struct OptionsSheet: View {
     @Binding var fromStep: String
     @Binding var forceAll: Bool
 
-    @Binding var keepIntermediateSrts: Bool
-    @Binding var keepRawJSON: Bool
-    @Binding var keepTemp: Bool
-    @Binding var nonInteractive: Bool
+    @Binding var deleteIntermediateSrts: Bool
+    @Binding var deleteRawJSON: Bool
+    @Binding var deleteTemp: Bool
     @Binding var dryRun: Bool
     @Binding var manual: Bool
 
     let onPickTerminologyFile: () -> Void
     let onPickPromptFile: () -> Void
     let onPickConfigFile: () -> Void
+    let onReset: () -> Void
+    let onClose: () -> Void
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Opzioni")
-                    .font(.title3)
-                    .fontWeight(.semibold)
+            VStack(alignment: .leading, spacing: 24) {
+                HStack(alignment: .top) {
+                    PanelHeader(
+                        title: "Options",
+                        subtitle: "Advanced pipeline settings and execution behavior."
+                    )
 
-                Group {
-                    FieldHeader(title: "Video basename", description: "Nome base del video/file output senza estensione.")
-                    TextField("es. lezione_capitolo_01", text: $videoBasename)
-                        .textFieldStyle(.roundedBorder)
+                    Spacer(minLength: 0)
 
-                    FieldHeader(title: "Lesson topic", description: "Override manuale dell'argomento della lezione.")
-                    TextField("Argomento lezione", text: $lessonTopic)
-                        .textFieldStyle(.roundedBorder)
+                    HStack(spacing: 8) {
+                        Button {
+                            onReset()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(PanelToolbarIconButtonStyle())
 
-                    FieldHeader(title: "Terminology context", description: "Contesto terminologico aggiuntivo passato al flusso LLM.")
-                    TextField("Contesto terminologico", text: $terminologyContext)
-                        .textFieldStyle(.roundedBorder)
+                        Button {
+                            onClose()
+                        } label: {
+                            Image(systemName: "square.and.arrow.down")
+                        }
+                        .buttonStyle(PanelToolbarIconButtonStyle())
 
-                    FieldHeader(title: "Terminology file", description: "File di glossario da anteporre al contesto terminologico.")
-                    HStack {
-                        TextField("/percorso/glossario.txt", text: $terminologyFile)
+                        Button {
+                            onClose()
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .buttonStyle(PanelToolbarIconButtonStyle())
+                    }
+                }
+                .padding(.bottom, 4)
+
+                Rectangle()
+                    .fill(Color.primary.opacity(0.06))
+                    .frame(height: 1)
+
+                OptionsSection(title: "Content", subtitle: "Metadata, lesson context, and terminology overrides.") {
+                    OptionFieldBlock(title: "Video basename", description: "Base name used for the video and generated files.", flag: "--video-basename") {
+                        TextField("e.g. lesson_chapter_01", text: $videoBasename)
                             .textFieldStyle(.roundedBorder)
-                        Button("Scegli") { onPickTerminologyFile() }
-                    }
-                }
-
-                Group {
-                    FieldHeader(title: "ROI mode", description: "Sceglie se usare un'area condivisa o separata per il rilevamento slide.")
-                    Picker("ROI mode", selection: $roiMode) {
-                        Text("Default").tag("")
-                        Text("shared").tag("shared")
-                        Text("separate").tag("separate")
-                    }
-                    .pickerStyle(.menu)
-
-                    Toggle(isOn: $enhanceSlide) {
-                        OptionLabel(title: "--enhance-slide", description: "Abilita l'enhancement degli screenshot delle slide.")
                     }
 
-                    FieldHeader(title: "Enhance preset", description: "Intensita dell'enhancement: mild, medium o strong.")
-                    Picker("Enhance preset", selection: $enhancePreset) {
-                        Text("Default").tag("")
-                        Text("mild").tag("mild")
-                        Text("medium").tag("medium")
-                        Text("strong").tag("strong")
-                    }
-                    .pickerStyle(.menu)
-
-                    FieldHeader(title: "Chunk size", description: "Numero di slide elaborate per chunk dal passaggio LLM.")
-                    TextField("es. 20", text: $chunkSize)
-                        .textFieldStyle(.roundedBorder)
-
-                    FieldHeader(title: "Sub langs", description: "Lista lingue sottotitoli per yt-dlp, ad esempio en,it.")
-                    TextField("es. en,it", text: $subLangs)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                Group {
-                    FieldHeader(title: "yt-dlp mode", description: "Strategia per trovare ed eseguire yt-dlp.")
-                    Picker("yt-dlp mode", selection: $ytdlpMode) {
-                        Text("Default").tag("")
-                        Text("auto").tag("auto")
-                        Text("system").tag("system")
-                        Text("fallback").tag("fallback")
-                    }
-                    .pickerStyle(.menu)
-
-                    FieldHeader(title: "Cookies from browser", description: "Passa i cookie del browser selezionato a yt-dlp.")
-                    TextField("es. chrome", text: $cookiesFromBrowser)
-                        .textFieldStyle(.roundedBorder)
-
-                    FieldHeader(title: "Model", description: "Modello usato dal wrapper chatgpt.")
-                    TextField("es. gpt-4.1", text: $model)
-                        .textFieldStyle(.roundedBorder)
-
-                    FieldHeader(title: "Temperature", description: "Temperatura del modello LLM.")
-                    TextField("es. 0.2", text: $temperature)
-                        .textFieldStyle(.roundedBorder)
-
-                    FieldHeader(title: "Max output tokens", description: "Limite massimo di token in output dal wrapper.")
-                    TextField("es. 3000", text: $maxOutputTokens)
-                        .textFieldStyle(.roundedBorder)
-
-                    FieldHeader(title: "Effort", description: "Livello di effort richiesto al wrapper chatgpt.")
-                    TextField("es. medium", text: $effort)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                Group {
-                    FieldHeader(title: "Verbosity", description: "Livello verbosita generale dello script.")
-                    Picker("Verbosity", selection: $verbosity) {
-                        Text("Default").tag("")
-                        Text("quiet").tag("quiet")
-                        Text("normal").tag("normal")
-                        Text("verbose").tag("verbose")
-                        Text("debug").tag("debug")
-                    }
-                    .pickerStyle(.menu)
-
-                    FieldHeader(title: "Script verbosity", description: "Alias esplicito di --verbosity.")
-                    Picker("Script verbosity", selection: $scriptVerbosity) {
-                        Text("Default").tag("")
-                        Text("quiet").tag("quiet")
-                        Text("normal").tag("normal")
-                        Text("verbose").tag("verbose")
-                        Text("debug").tag("debug")
-                    }
-                    .pickerStyle(.menu)
-
-                    FieldHeader(title: "LLM verbosity", description: "Livello di dettaglio del passaggio LLM.")
-                    Picker("LLM verbosity", selection: $llmVerbosity) {
-                        Text("Default").tag("")
-                        Text("low").tag("low")
-                        Text("medium").tag("medium")
-                        Text("high").tag("high")
-                    }
-                    .pickerStyle(.menu)
-
-                    FieldHeader(title: "Prompt file", description: "Prompt custom completo al posto del built-in.")
-                    HStack {
-                        TextField("/percorso/prompt.txt", text: $promptFile)
+                    OptionFieldBlock(title: "Lesson topic", description: "Lesson topic with manual override.", flag: "--lesson-topic") {
+                        TextField("Lesson topic", text: $lessonTopic)
                             .textFieldStyle(.roundedBorder)
-                        Button("Scegli") { onPickPromptFile() }
                     }
 
-                    Toggle(isOn: $useDefaultConfig) {
-                        OptionLabel(title: "--config", description: "Usa il config di default config/slidescribe.conf.")
-                    }
-
-                    FieldHeader(title: "Config file", description: "Usa un file di configurazione esplicito.")
-                    HStack {
-                        TextField("/percorso/slidescribe.conf", text: $configFile)
+                    OptionFieldBlock(title: "Terminology context", description: "Additional terminology context passed into the workflow.", flag: "--terminology-context") {
+                        TextField("Terminology context", text: $terminologyContext)
                             .textFieldStyle(.roundedBorder)
-                        Button("Scegli") { onPickConfigFile() }
+                    }
+
+                    FilePickerField(
+                        title: "Terminology file",
+                        description: "Glossary or terminology file prepended to the context.",
+                        flag: "--terminology-file",
+                        text: $terminologyFile,
+                        placeholder: "/path/to/glossary.txt",
+                        buttonTitle: "Choose",
+                        action: onPickTerminologyFile
+                    )
+                }
+
+                OptionsSection(title: "Image Processing", subtitle: "Slide detection and screenshot enhancement.") {
+                    OptionFieldBlock(title: "ROI mode", description: "Use a shared or separate region for slide detection.", flag: "--roi-mode") {
+                        Picker("", selection: $roiMode) {
+                            Text("Default").tag("")
+                            Text("shared").tag("shared")
+                            Text("separate").tag("separate")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    ToggleOptionRow(
+                        title: "Enhance slide screenshots",
+                        description: "Enable automatic enhancement for slide screenshots.",
+                        flag: "--enhance-slide",
+                        isOn: $enhanceSlide
+                    )
+
+                    OptionFieldBlock(title: "Enhance preset", description: "Enhancement intensity applied to screenshots.", flag: "--enhance-preset") {
+                        Picker("", selection: $enhancePreset) {
+                            Text("Default").tag("")
+                            Text("mild").tag("mild")
+                            Text("medium").tag("medium")
+                            Text("strong").tag("strong")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    OptionFieldBlock(title: "Skip first seconds", description: "Skip the first N seconds of the video during the screenshot step.", flag: "--skip-first-sec") {
+                        TextField("e.g. 15", text: $skipFirstSec)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    OptionFieldBlock(title: "Skip last seconds", description: "Exclude the last N seconds of the video during the screenshot step.", flag: "--skip-last-sec") {
+                        TextField("e.g. 10", text: $skipLastSec)
+                            .textFieldStyle(.roundedBorder)
                     }
                 }
 
-                Divider()
-
-                Group {
-                    Toggle(isOn: $skipDownload) {
-                        OptionLabel(title: "--skip-download", description: "Salta il download del video.")
-                    }
-                    Toggle(isOn: $skipSubs) {
-                        OptionLabel(title: "--skip-subs", description: "Salta il download dei sottotitoli.")
-                    }
-                    Toggle(isOn: $skipScreenshots) {
-                        OptionLabel(title: "--skip-screenshots", description: "Salta Screenshot_grabber.")
-                    }
-                    Toggle(isOn: $skipLLM) {
-                        OptionLabel(title: "--skip-llm", description: "Salta la pipeline LLM.")
-                    }
-                    Toggle(isOn: $skipPDF) {
-                        OptionLabel(title: "--skip-pdf", description: "Salta la generazione PDF e DOCX.")
+                OptionsSection(title: "Download & AI", subtitle: "Subtitles, yt-dlp behavior, and model tuning.") {
+                    OptionFieldBlock(title: "Subtitle languages", description: "Subtitle language list passed to yt-dlp.", flag: "--sub-langs") {
+                        TextField("e.g. en,it", text: $subLangs)
+                            .textFieldStyle(.roundedBorder)
                     }
 
-                    FieldHeader(title: "From step", description: "Fa partire la pipeline da screenshots, llm oppure pdf.")
-                    Picker("From step", selection: $fromStep) {
-                        Text("Default").tag("")
-                        Text("screenshots").tag("screenshots")
-                        Text("llm").tag("llm")
-                        Text("pdf").tag("pdf")
+                    OptionFieldBlock(title: "yt-dlp mode", description: "Strategy used to locate and run yt-dlp.", flag: "--ytdlp-mode") {
+                        Picker("", selection: $ytdlpMode) {
+                            Text("Default").tag("")
+                            Text("auto").tag("auto")
+                            Text("system").tag("system")
+                            Text("fallback").tag("fallback")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .pickerStyle(.menu)
 
-                    Toggle(isOn: $forceAll) {
-                        OptionLabel(title: "--force-all", description: "Riesegue anche step con checkpoint gia presenti.")
+                    OptionFieldBlock(title: "Cookies from browser", description: "Pass browser cookies through to yt-dlp.", flag: "--cookies-from-browser") {
+                        TextField("e.g. chrome", text: $cookiesFromBrowser)
+                            .textFieldStyle(.roundedBorder)
                     }
+
+                    OptionFieldBlock(title: "Chunk size", description: "Number of slides processed per LLM chunk.", flag: "--chunk-size") {
+                        TextField("e.g. 20", text: $chunkSize)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    OptionFieldBlock(title: "Model", description: "Model used by the chatgpt wrapper.", flag: "--model") {
+                        TextField("e.g. gpt-4.1", text: $model)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    OptionFieldBlock(title: "Temperature", description: "Temperature used by the chatgpt wrapper.", flag: "--temperature") {
+                        TextField("e.g. 0.2", text: $temperature)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    OptionFieldBlock(title: "Max output tokens", description: "Maximum output token limit for the wrapper.", flag: "--max-output-tokens") {
+                        TextField("e.g. 3000", text: $maxOutputTokens)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    OptionFieldBlock(title: "Effort", description: "Effort level requested from the chatgpt wrapper.", flag: "--effort") {
+                        TextField("e.g. medium", text: $effort)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    OptionFieldBlock(title: "LLM verbosity", description: "Detail level used for the LLM step.", flag: "--llm-verbosity") {
+                        Picker("", selection: $llmVerbosity) {
+                            Text("Default").tag("")
+                            Text("low").tag("low")
+                            Text("medium").tag("medium")
+                            Text("high").tag("high")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    FilePickerField(
+                        title: "Prompt file",
+                        description: "Use a complete custom prompt instead of the built-in one.",
+                        flag: "--prompt-file",
+                        text: $promptFile,
+                        placeholder: "/path/to/prompt.txt",
+                        buttonTitle: "Choose",
+                        action: onPickPromptFile
+                    )
                 }
 
-                Divider()
+                OptionsSection(title: "Configuration", subtitle: "Verbosity, prompt customization, and config sources.") {
+                    OptionFieldBlock(title: "Verbosity", description: "Overall verbosity level for the script.", flag: "--verbosity") {
+                        Picker("", selection: $verbosity) {
+                            Text("Default").tag("")
+                            Text("quiet").tag("quiet")
+                            Text("normal").tag("normal")
+                            Text("verbose").tag("verbose")
+                            Text("debug").tag("debug")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
 
-                Group {
-                    Toggle(isOn: $keepIntermediateSrts) {
-                        OptionLabel(title: "--keep-intermediate-srts", description: "Non elimina gli SRT intermedi.")
+                    OptionFieldBlock(title: "Script verbosity", description: "Explicit alias for the general verbosity setting.", flag: "--script-verbosity") {
+                        Picker("", selection: $scriptVerbosity) {
+                            Text("Default").tag("")
+                            Text("quiet").tag("quiet")
+                            Text("normal").tag("normal")
+                            Text("verbose").tag("verbose")
+                            Text("debug").tag("debug")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Toggle(isOn: $keepRawJSON) {
-                        OptionLabel(title: "--keep-raw-json", description: "Salva il raw JSON del wrapper chatgpt.")
+
+                    ToggleOptionRow(
+                        title: "Use default config",
+                        description: "Use the built-in config at config/slidescribe.conf.",
+                        flag: "--config",
+                        isOn: $useDefaultConfig
+                    )
+
+                    FilePickerField(
+                        title: "Config file",
+                        description: "Use an explicit config file.",
+                        flag: "--config-file",
+                        text: $configFile,
+                        placeholder: "/path/to/slidescribe.conf",
+                        buttonTitle: "Choose",
+                        action: onPickConfigFile
+                    )
+                }
+
+                OptionsSection(title: "Pipeline Control", subtitle: "Skip parts of the workflow or restart from a specific step.") {
+                    ToggleOptionRow(
+                        title: "Skip video download",
+                        description: "Skip downloading the video.",
+                        flag: "--skip-download",
+                        isOn: $skipDownload
+                    )
+                    ToggleOptionRow(
+                        title: "Skip subtitles",
+                        description: "Skip downloading subtitles.",
+                        flag: "--skip-subs",
+                        isOn: $skipSubs
+                    )
+                    ToggleOptionRow(
+                        title: "Skip screenshots",
+                        description: "Skip the screenshot extraction step.",
+                        flag: "--skip-screenshots",
+                        isOn: $skipScreenshots
+                    )
+                    ToggleOptionRow(
+                        title: "Skip LLM pipeline",
+                        description: "Skip the LLM pipeline.",
+                        flag: "--skip-llm",
+                        isOn: $skipLLM
+                    )
+                    ToggleOptionRow(
+                        title: "Skip PDF and DOCX export",
+                        description: "Skip PDF and DOCX generation.",
+                        flag: "--skip-pdf",
+                        isOn: $skipPDF
+                    )
+
+                    OptionFieldBlock(title: "Start from step", description: "Start the pipeline from an intermediate step.", flag: "--from-step") {
+                        Picker("", selection: $fromStep) {
+                            Text("Default").tag("")
+                            Text("screenshots").tag("screenshots")
+                            Text("llm").tag("llm")
+                            Text("pdf").tag("pdf")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Toggle(isOn: $keepTemp) {
-                        OptionLabel(title: "--keep-temp", description: "Conserva eventuali file temporanei futuri.")
-                    }
-                    Toggle(isOn: $nonInteractive) {
-                        OptionLabel(title: "--non-interactive", description: "Disabilita domande interattive.")
-                    }
-                    Toggle(isOn: $dryRun) {
-                        OptionLabel(title: "--dry-run", description: "Mostra config e piano senza eseguire.")
-                    }
-                    Toggle(isOn: $manual) {
-                        OptionLabel(title: "--manual", description: "Mostra il manuale esteso.")
-                    }
+
+                    ToggleOptionRow(
+                        title: "Force all steps",
+                        description: "Re-run steps even when checkpoints already exist.",
+                        flag: "--force-all",
+                        isOn: $forceAll
+                    )
+                }
+
+                OptionsSection(title: "Cleanup & Debug", subtitle: "Cleanup behavior, diagnostics, and execution inspection.") {
+                    ToggleOptionRow(
+                        title: "Delete intermediate SRT files",
+                        description: "Delete intermediate SRT files at the end of the pipeline.",
+                        flag: "--delete-intermediate-srts",
+                        isOn: $deleteIntermediateSrts
+                    )
+                    ToggleOptionRow(
+                        title: "Delete raw JSON output",
+                        description: "Delete raw JSON output from the chatgpt wrapper at the end of the pipeline.",
+                        flag: "--delete-raw-json",
+                        isOn: $deleteRawJSON
+                    )
+                    ToggleOptionRow(
+                        title: "Delete temporary files",
+                        description: "Delete temporary files managed by the pipeline.",
+                        flag: "--delete-temp",
+                        isOn: $deleteTemp
+                    )
+                    ToggleOptionRow(
+                        title: "Dry run",
+                        description: "Show the config and plan without executing.",
+                        flag: "--dry-run",
+                        isOn: $dryRun
+                    )
+                    ToggleOptionRow(
+                        title: "Extended manual mode",
+                        description: "Request the extended manual in the CLI.",
+                        flag: "--manual",
+                        isOn: $manual
+                    )
                 }
             }
-            .padding()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
         }
-        .frame(minWidth: 560, minHeight: 680)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
-private struct FieldHeader: View {
+private struct OptionsSection<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     let title: String
-    let description: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-            Text(description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
-private struct OptionLabel: View {
-    let title: String
-    let description: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-            Text(description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
-private struct ToolbarPill<Content: View>: View {
+    let subtitle: String
     @ViewBuilder let content: Content
 
     var body: some View {
-        HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Capsule()
+                    .fill(Color.accentColor.opacity(0.55))
+                    .frame(width: 28, height: 3)
+
+                Text(title)
+                    .font(.system(size: 20, weight: .semibold))
+
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary.opacity(0.68))
+            }
+
+            VStack(alignment: .leading, spacing: 16) {
+                content
+            }
+            .controlSize(.small)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(colorScheme == .dark ? Color.white.opacity(0.045) : Color.white.opacity(0.62))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.05), lineWidth: 1)
+        )
+    }
+}
+
+private struct OptionFieldBlock<Content: View>: View {
+    let title: String
+    let description: String
+    let flag: String?
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 12.5, weight: .semibold))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary.opacity(0.74))
+
+                if let flag, !flag.isEmpty {
+                    Text(flag)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary.opacity(0.56))
+                }
+            }
+
             content
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 5)
-        .background(.regularMaterial)
-        .clipShape(Capsule())
-        .overlay(
-            Capsule()
-                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-        )
     }
 }
 
-private struct IconOnlyButton: View {
-    let icon: String
-    let helpText: String
-    var tint: Color = .primary
+private struct FilePickerField: View {
+    let title: String
+    let description: String
+    let flag: String
+    @Binding var text: String
+    let placeholder: String
+    let buttonTitle: String
     let action: () -> Void
-    var onHoverChanged: (HoverPhase) -> Void = { _ in }
-    @State private var isHovering = false
-    @State private var isPressed = false
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 30, height: 26)
-                .background(isHovering ? Color.accentColor.opacity(0.1) : .clear)
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .scaleEffect(isPressed ? 0.97 : (isHovering ? 1.01 : 1.0))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(helpText)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in isPressed = true }
-                .onEnded { _ in isPressed = false }
-        )
-        .onContinuousHover(coordinateSpace: .named("ContentViewSpace")) { phase in
-            switch phase {
-            case .active:
-                isHovering = true
-            case .ended:
-                isHovering = false
+        OptionFieldBlock(title: title, description: description, flag: flag) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                TextField(placeholder, text: $text)
+                    .textFieldStyle(.roundedBorder)
+
+                Button(buttonTitle, action: action)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
             }
-            onHoverChanged(phase)
         }
-        .animation(.easeOut(duration: 0.14), value: isHovering)
-        .animation(.easeOut(duration: 0.1), value: isPressed)
     }
 }
 
-private struct PointerTooltip: View {
-    let text: String
+private struct ToggleOptionRow: View {
+    let title: String
+    let description: String
+    let flag: String
+    @Binding var isOn: Bool
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(Color.white.opacity(0.96))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Color.black.opacity(0.82))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            )
-            .shadow(color: Color.black.opacity(0.18), radius: 8, y: 3)
-            .fixedSize()
-    }
-}
-
-private struct GlassPanelBackground: View {
-    let colorScheme: ColorScheme
-    let cornerRadius: CGFloat
-
-    var body: some View {
-        ZStack {
-            VisualEffectBackdrop(material: .sidebar, blendingMode: .withinWindow)
-
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(
-                    colorScheme == .dark
-                        ? Color.white.opacity(0.045)
-                        : Color.white.opacity(0.18)
-                )
-        }
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-    }
-}
-
-private struct StatusRow: View {
-    let statusText: String
-    let detailText: String
-    let isRunning: Bool
-
-    var body: some View {
-        HStack(spacing: 10) {
-            StatusBadge(statusText: statusText, isRunning: isRunning)
-
-            if !detailText.isEmpty {
-                Text(detailText)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+        Toggle(isOn: $isOn) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                Text(description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary.opacity(0.74))
+                Text(flag)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary.opacity(0.56))
             }
-
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 2)
+        .toggleStyle(.checkbox)
     }
 }
 

@@ -263,14 +263,6 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/SlideScribe/SlideScribecopia/.venv/lib/python3.14/site-packages/cv2/.dylibs",
-					"$(PROJECT_DIR)/SlideScribe/SlideScribecopia/.venv/lib/python3.14/site-packages/numpy/_core/lib",
-					"$(PROJECT_DIR)/SlideScribe/SlideScribecopia/.venv/lib/python3.14/site-packages/numpy/random/lib",
-					"$(PROJECT_DIR)/SlideScribe/SlideScribecopia/.venv/lib/python3.14/site-packages/PIL/.dylibs",
-					"$(PROJECT_DIR)/SlideScribe/SlideScribecopia/.venv/lib/python3.14/site-packages/scipy/.dylibs",
-				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Vanad.SlideScribe;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -301,14 +293,6 @@
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
-				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/SlideScribe/SlideScribecopia/.venv/lib/python3.14/site-packages/cv2/.dylibs",
-					"$(PROJECT_DIR)/SlideScribe/SlideScribecopia/.venv/lib/python3.14/site-packages/numpy/_core/lib",
-					"$(PROJECT_DIR)/SlideScribe/SlideScribecopia/.venv/lib/python3.14/site-packages/numpy/random/lib",
-					"$(PROJECT_DIR)/SlideScribe/SlideScribecopia/.venv/lib/python3.14/site-packages/PIL/.dylibs",
-					"$(PROJECT_DIR)/SlideScribe/SlideScribecopia/.venv/lib/python3.14/site-packages/scipy/.dylibs",
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Vanad.SlideScribe;
