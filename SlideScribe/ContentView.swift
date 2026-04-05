@@ -58,7 +58,9 @@ struct ContentView: View {
     @State private var verbosity: String = ""
     @State private var scriptVerbosity: String = ""
     @State private var llmVerbosity: String = ""
+    @State private var summaryModel: String = ""
     @State private var promptFile: String = ""
+    @State private var summaryPromptFile: String = ""
     @State private var useDefaultConfig: Bool = false
     @State private var configFile: String = ""
 
@@ -66,6 +68,7 @@ struct ContentView: View {
     @State private var skipSubs: Bool = false
     @State private var skipScreenshots: Bool = false
     @State private var skipLLM: Bool = false
+    @State private var skipSummary: Bool = false
     @State private var skipPDF: Bool = false
     @State private var fromStep: String = ""
     @State private var forceAll: Bool = false
@@ -331,13 +334,16 @@ struct ContentView: View {
             verbosity: $verbosity,
             scriptVerbosity: $scriptVerbosity,
             llmVerbosity: $llmVerbosity,
+            summaryModel: $summaryModel,
             promptFile: $promptFile,
+            summaryPromptFile: $summaryPromptFile,
             useDefaultConfig: $useDefaultConfig,
             configFile: $configFile,
             skipDownload: $skipDownload,
             skipSubs: $skipSubs,
             skipScreenshots: $skipScreenshots,
             skipLLM: $skipLLM,
+            skipSummary: $skipSummary,
             skipPDF: $skipPDF,
             fromStep: $fromStep,
             forceAll: $forceAll,
@@ -351,6 +357,9 @@ struct ContentView: View {
             },
             onPickPromptFile: {
                 promptFile = pickFilePath() ?? promptFile
+            },
+            onPickSummaryPromptFile: {
+                summaryPromptFile = pickFilePath() ?? summaryPromptFile
             },
             onPickConfigFile: {
                 configFile = pickFilePath() ?? configFile
@@ -751,7 +760,9 @@ struct ContentView: View {
         verbosity = ""
         scriptVerbosity = ""
         llmVerbosity = ""
+        summaryModel = ""
         promptFile = ""
+        summaryPromptFile = ""
         useDefaultConfig = false
         configFile = ""
 
@@ -759,6 +770,7 @@ struct ContentView: View {
         skipSubs = false
         skipScreenshots = false
         skipLLM = false
+        skipSummary = false
         skipPDF = false
         fromStep = ""
         forceAll = false
@@ -1014,7 +1026,9 @@ struct ContentView: View {
         appendOption("--verbosity", value: verbosity, to: &components)
         appendOption("--script-verbosity", value: scriptVerbosity, to: &components)
         appendOption("--llm-verbosity", value: llmVerbosity, to: &components)
+        appendOption("--summary-model", value: summaryModel, to: &components)
         appendOption("--prompt-file", value: promptFile, to: &components)
+        appendOption("--summary-prompt-file", value: summaryPromptFile, to: &components)
 
         if useDefaultConfig {
             components.append("--config")
@@ -1026,6 +1040,7 @@ struct ContentView: View {
         if skipSubs { components.append("--skip-subs") }
         if skipScreenshots { components.append("--skip-screenshots") }
         if skipLLM { components.append("--skip-llm") }
+        if skipSummary { components.append("--skip-summary") }
         if skipPDF { components.append("--skip-pdf") }
 
         appendOption("--from-step", value: fromStep, to: &components)
@@ -1423,7 +1438,9 @@ private struct OptionsSheet: View {
     @Binding var verbosity: String
     @Binding var scriptVerbosity: String
     @Binding var llmVerbosity: String
+    @Binding var summaryModel: String
     @Binding var promptFile: String
+    @Binding var summaryPromptFile: String
     @Binding var useDefaultConfig: Bool
     @Binding var configFile: String
 
@@ -1431,6 +1448,7 @@ private struct OptionsSheet: View {
     @Binding var skipSubs: Bool
     @Binding var skipScreenshots: Bool
     @Binding var skipLLM: Bool
+    @Binding var skipSummary: Bool
     @Binding var skipPDF: Bool
     @Binding var fromStep: String
     @Binding var forceAll: Bool
@@ -1443,9 +1461,30 @@ private struct OptionsSheet: View {
 
     let onPickTerminologyFile: () -> Void
     let onPickPromptFile: () -> Void
+    let onPickSummaryPromptFile: () -> Void
     let onPickConfigFile: () -> Void
     let onReset: () -> Void
     let onClose: () -> Void
+
+    @State private var searchText: String = ""
+
+    private var normalizedSearchText: String {
+        searchText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+    }
+
+    private var isSearching: Bool {
+        !normalizedSearchText.isEmpty
+    }
+
+    private func matchesSearch(_ values: String...) -> Bool {
+        guard isSearching else { return true }
+
+        let haystack = values.joined(separator: " ")
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        return haystack.contains(normalizedSearchText)
+    }
 
     var body: some View {
         ScrollView {
@@ -1487,274 +1526,420 @@ private struct OptionsSheet: View {
                     .fill(Color.primary.opacity(0.06))
                     .frame(height: 1)
 
-                OptionsSection(title: "Content", subtitle: "Metadata, lesson context, and terminology overrides.") {
-                    OptionFieldBlock(title: "Video basename", description: "Base name used for the video and generated files.", flag: "--video-basename") {
-                        TextField("e.g. lesson_chapter_01", text: $videoBasename)
-                            .textFieldStyle(.roundedBorder)
-                    }
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
 
-                    OptionFieldBlock(title: "Lesson topic", description: "Lesson topic with manual override.", flag: "--lesson-topic") {
-                        TextField("Lesson topic", text: $lessonTopic)
-                            .textFieldStyle(.roundedBorder)
-                    }
+                    TextField("Search options or flags", text: $searchText)
+                        .textFieldStyle(.plain)
 
-                    OptionFieldBlock(title: "Terminology context", description: "Additional terminology context passed into the workflow.", flag: "--terminology-context") {
-                        TextField("Terminology context", text: $terminologyContext)
-                            .textFieldStyle(.roundedBorder)
+                    if isSearching {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
                     }
-
-                    FilePickerField(
-                        title: "Terminology file",
-                        description: "Glossary or terminology file prepended to the context.",
-                        flag: "--terminology-file",
-                        text: $terminologyFile,
-                        placeholder: "/path/to/glossary.txt",
-                        buttonTitle: "Choose",
-                        action: onPickTerminologyFile
-                    )
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.primary.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                )
 
-                OptionsSection(title: "Image Processing", subtitle: "Slide detection and screenshot enhancement.") {
-                    OptionFieldBlock(title: "ROI mode", description: "Use a shared or separate region for slide detection.", flag: "--roi-mode") {
-                        Picker("", selection: $roiMode) {
-                            Text("Default").tag("")
-                            Text("shared").tag("shared")
-                            Text("separate").tag("separate")
+                if matchesSearch("Content", "Metadata, lesson context, and terminology overrides.", "video basename", "lesson topic", "terminology context", "terminology file") {
+                    OptionsSection(title: "Content", subtitle: "Metadata, lesson context, and terminology overrides.") {
+                        if matchesSearch("Video basename", "Base name used for the video and generated files.", "--video-basename") {
+                            OptionFieldBlock(title: "Video basename", description: "Base name used for the video and generated files.", flag: "--video-basename") {
+                                TextField("e.g. lesson_chapter_01", text: $videoBasename)
+                                    .textFieldStyle(.roundedBorder)
+                            }
                         }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
 
-                    ToggleOptionRow(
-                        title: "Enhance slide screenshots",
-                        description: "Enable automatic enhancement for slide screenshots.",
-                        flag: "--enhance-slide",
-                        isOn: $enhanceSlide
-                    )
-
-                    OptionFieldBlock(title: "Enhance preset", description: "Enhancement intensity applied to screenshots.", flag: "--enhance-preset") {
-                        Picker("", selection: $enhancePreset) {
-                            Text("Default").tag("")
-                            Text("mild").tag("mild")
-                            Text("medium").tag("medium")
-                            Text("strong").tag("strong")
+                        if matchesSearch("Lesson topic", "Lesson topic with manual override.", "--lesson-topic") {
+                            OptionFieldBlock(title: "Lesson topic", description: "Lesson topic with manual override.", flag: "--lesson-topic") {
+                                TextField("Lesson topic", text: $lessonTopic)
+                                    .textFieldStyle(.roundedBorder)
+                            }
                         }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
 
-                    OptionFieldBlock(title: "Skip first seconds", description: "Skip the first N seconds of the video during the screenshot step.", flag: "--skip-first-sec") {
-                        TextField("e.g. 15", text: $skipFirstSec)
-                            .textFieldStyle(.roundedBorder)
-                    }
+                        if matchesSearch("Terminology context", "Additional terminology context passed into the workflow.", "--terminology-context") {
+                            OptionFieldBlock(title: "Terminology context", description: "Additional terminology context passed into the workflow.", flag: "--terminology-context") {
+                                TextField("Terminology context", text: $terminologyContext)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
 
-                    OptionFieldBlock(title: "Skip last seconds", description: "Exclude the last N seconds of the video during the screenshot step.", flag: "--skip-last-sec") {
-                        TextField("e.g. 10", text: $skipLastSec)
-                            .textFieldStyle(.roundedBorder)
+                        if matchesSearch("Terminology file", "Glossary or terminology file prepended to the context.", "--terminology-file", "glossary") {
+                            FilePickerField(
+                                title: "Terminology file",
+                                description: "Glossary or terminology file prepended to the context.",
+                                flag: "--terminology-file",
+                                text: $terminologyFile,
+                                placeholder: "/path/to/glossary.txt",
+                                buttonTitle: "Choose",
+                                action: onPickTerminologyFile
+                            )
+                        }
                     }
                 }
 
-                OptionsSection(title: "Download & AI", subtitle: "Subtitles, yt-dlp behavior, and model tuning.") {
-                    OptionFieldBlock(title: "Subtitle languages", description: "Subtitle language list passed to yt-dlp.", flag: "--sub-langs") {
-                        TextField("e.g. en,it", text: $subLangs)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    OptionFieldBlock(title: "yt-dlp mode", description: "Strategy used to locate and run yt-dlp.", flag: "--ytdlp-mode") {
-                        Picker("", selection: $ytdlpMode) {
-                            Text("Default").tag("")
-                            Text("auto").tag("auto")
-                            Text("system").tag("system")
-                            Text("fallback").tag("fallback")
+                if matchesSearch("Image Processing", "Slide detection and screenshot enhancement.", "roi mode", "enhance", "skip first", "skip last") {
+                    OptionsSection(title: "Image Processing", subtitle: "Slide detection and screenshot enhancement.") {
+                        if matchesSearch("ROI mode", "Use a shared or separate region for slide detection.", "--roi-mode", "shared", "separate") {
+                            OptionFieldBlock(title: "ROI mode", description: "Use a shared or separate region for slide detection.", flag: "--roi-mode") {
+                                Picker("", selection: $roiMode) {
+                                    Text("Default").tag("")
+                                    Text("shared").tag("shared")
+                                    Text("separate").tag("separate")
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
 
-                    OptionFieldBlock(title: "Cookies from browser", description: "Pass browser cookies through to yt-dlp.", flag: "--cookies-from-browser") {
-                        TextField("e.g. chrome", text: $cookiesFromBrowser)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    OptionFieldBlock(title: "Chunk size", description: "Number of slides processed per LLM chunk.", flag: "--chunk-size") {
-                        TextField("e.g. 20", text: $chunkSize)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    OptionFieldBlock(title: "Model", description: "Model used by the chatgpt wrapper.", flag: "--model") {
-                        TextField("e.g. gpt-4.1", text: $model)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    OptionFieldBlock(title: "Temperature", description: "Temperature used by the chatgpt wrapper.", flag: "--temperature") {
-                        TextField("e.g. 0.2", text: $temperature)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    OptionFieldBlock(title: "Max output tokens", description: "Maximum output token limit for the wrapper.", flag: "--max-output-tokens") {
-                        TextField("e.g. 3000", text: $maxOutputTokens)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    OptionFieldBlock(title: "Effort", description: "Effort level requested from the chatgpt wrapper.", flag: "--effort") {
-                        TextField("e.g. medium", text: $effort)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    OptionFieldBlock(title: "LLM verbosity", description: "Detail level used for the LLM step.", flag: "--llm-verbosity") {
-                        Picker("", selection: $llmVerbosity) {
-                            Text("Default").tag("")
-                            Text("low").tag("low")
-                            Text("medium").tag("medium")
-                            Text("high").tag("high")
+                        if matchesSearch("Enhance slide screenshots", "Enable automatic enhancement for slide screenshots.", "--enhance-slide") {
+                            ToggleOptionRow(
+                                title: "Enhance slide screenshots",
+                                description: "Enable automatic enhancement for slide screenshots.",
+                                flag: "--enhance-slide",
+                                isOn: $enhanceSlide
+                            )
                         }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
 
-                    FilePickerField(
-                        title: "Prompt file",
-                        description: "Use a complete custom prompt instead of the built-in one.",
-                        flag: "--prompt-file",
-                        text: $promptFile,
-                        placeholder: "/path/to/prompt.txt",
-                        buttonTitle: "Choose",
-                        action: onPickPromptFile
-                    )
+                        if matchesSearch("Enhance preset", "Enhancement intensity applied to screenshots.", "--enhance-preset", "mild", "medium", "strong") {
+                            OptionFieldBlock(title: "Enhance preset", description: "Enhancement intensity applied to screenshots.", flag: "--enhance-preset") {
+                                Picker("", selection: $enhancePreset) {
+                                    Text("Default").tag("")
+                                    Text("mild").tag("mild")
+                                    Text("medium").tag("medium")
+                                    Text("strong").tag("strong")
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        if matchesSearch("Skip first seconds", "Skip the first N seconds of the video during the screenshot step.", "--skip-first-sec") {
+                            OptionFieldBlock(title: "Skip first seconds", description: "Skip the first N seconds of the video during the screenshot step.", flag: "--skip-first-sec") {
+                                TextField("e.g. 15", text: $skipFirstSec)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        if matchesSearch("Skip last seconds", "Exclude the last N seconds of the video during the screenshot step.", "--skip-last-sec") {
+                            OptionFieldBlock(title: "Skip last seconds", description: "Exclude the last N seconds of the video during the screenshot step.", flag: "--skip-last-sec") {
+                                TextField("e.g. 10", text: $skipLastSec)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+                    }
                 }
 
-                OptionsSection(title: "Configuration", subtitle: "Verbosity, prompt customization, and config sources.") {
-                    OptionFieldBlock(title: "Verbosity", description: "Overall verbosity level for the script.", flag: "--verbosity") {
-                        Picker("", selection: $verbosity) {
-                            Text("Default").tag("")
-                            Text("quiet").tag("quiet")
-                            Text("normal").tag("normal")
-                            Text("verbose").tag("verbose")
-                            Text("debug").tag("debug")
+                if matchesSearch("Download & AI", "Subtitles, yt-dlp behavior, and model tuning.", "subtitle", "yt-dlp", "model", "summary", "prompt", "llm") {
+                    OptionsSection(title: "Download & AI", subtitle: "Subtitles, yt-dlp behavior, and model tuning.") {
+                        if matchesSearch("Subtitle languages", "Subtitle language list passed to yt-dlp.", "--sub-langs") {
+                            OptionFieldBlock(title: "Subtitle languages", description: "Subtitle language list passed to yt-dlp.", flag: "--sub-langs") {
+                                TextField("e.g. en,it", text: $subLangs)
+                                    .textFieldStyle(.roundedBorder)
+                            }
                         }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
 
-                    OptionFieldBlock(title: "Script verbosity", description: "Explicit alias for the general verbosity setting.", flag: "--script-verbosity") {
-                        Picker("", selection: $scriptVerbosity) {
-                            Text("Default").tag("")
-                            Text("quiet").tag("quiet")
-                            Text("normal").tag("normal")
-                            Text("verbose").tag("verbose")
-                            Text("debug").tag("debug")
+                        if matchesSearch("yt-dlp mode", "Strategy used to locate and run yt-dlp.", "--ytdlp-mode", "auto", "system", "fallback") {
+                            OptionFieldBlock(title: "yt-dlp mode", description: "Strategy used to locate and run yt-dlp.", flag: "--ytdlp-mode") {
+                                Picker("", selection: $ytdlpMode) {
+                                    Text("Default").tag("")
+                                    Text("auto").tag("auto")
+                                    Text("system").tag("system")
+                                    Text("fallback").tag("fallback")
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if matchesSearch("Cookies from browser", "Pass browser cookies through to yt-dlp.", "--cookies-from-browser") {
+                            OptionFieldBlock(title: "Cookies from browser", description: "Pass browser cookies through to yt-dlp.", flag: "--cookies-from-browser") {
+                                TextField("e.g. chrome", text: $cookiesFromBrowser)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        if matchesSearch("Chunk size", "Number of slides processed per LLM chunk.", "--chunk-size") {
+                            OptionFieldBlock(title: "Chunk size", description: "Number of slides processed per LLM chunk.", flag: "--chunk-size") {
+                                TextField("e.g. 20", text: $chunkSize)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        if matchesSearch("Model", "Model used by the chatgpt wrapper.", "--model") {
+                            OptionFieldBlock(title: "Model", description: "Model used by the chatgpt wrapper.", flag: "--model") {
+                                TextField("e.g. gpt-4.1", text: $model)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        if matchesSearch("Temperature", "Temperature used by the chatgpt wrapper.", "--temperature") {
+                            OptionFieldBlock(title: "Temperature", description: "Temperature used by the chatgpt wrapper.", flag: "--temperature") {
+                                TextField("e.g. 0.2", text: $temperature)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        if matchesSearch("Max output tokens", "Maximum output token limit for the wrapper.", "--max-output-tokens") {
+                            OptionFieldBlock(title: "Max output tokens", description: "Maximum output token limit for the wrapper.", flag: "--max-output-tokens") {
+                                TextField("e.g. 3000", text: $maxOutputTokens)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        if matchesSearch("Effort", "Effort level requested from the chatgpt wrapper.", "--effort") {
+                            OptionFieldBlock(title: "Effort", description: "Effort level requested from the chatgpt wrapper.", flag: "--effort") {
+                                TextField("e.g. medium", text: $effort)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        if matchesSearch("LLM verbosity", "Detail level used for the LLM step.", "--llm-verbosity", "low", "medium", "high") {
+                            OptionFieldBlock(title: "LLM verbosity", description: "Detail level used for the LLM step.", flag: "--llm-verbosity") {
+                                Picker("", selection: $llmVerbosity) {
+                                    Text("Default").tag("")
+                                    Text("low").tag("low")
+                                    Text("medium").tag("medium")
+                                    Text("high").tag("high")
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        if matchesSearch("Summary model", "Model used only for the final summary.", "--summary-model", "summary") {
+                            OptionFieldBlock(title: "Summary model", description: "Model used only for the final summary.", flag: "--summary-model") {
+                                TextField("e.g. gpt-4.1-mini", text: $summaryModel)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        if matchesSearch("Prompt file", "Use a complete custom prompt instead of the built-in one.", "--prompt-file") {
+                            FilePickerField(
+                                title: "Prompt file",
+                                description: "Use a complete custom prompt instead of the built-in one.",
+                                flag: "--prompt-file",
+                                text: $promptFile,
+                                placeholder: "/path/to/prompt.txt",
+                                buttonTitle: "Choose",
+                                action: onPickPromptFile
+                            )
+                        }
+
+                        if matchesSearch("Summary prompt file", "Custom prompt used only for the final summary.", "--summary-prompt-file", "summary") {
+                            FilePickerField(
+                                title: "Summary prompt file",
+                                description: "Custom prompt used only for the final summary.",
+                                flag: "--summary-prompt-file",
+                                text: $summaryPromptFile,
+                                placeholder: "/path/to/summary-prompt.txt",
+                                buttonTitle: "Choose",
+                                action: onPickSummaryPromptFile
+                            )
+                        }
                     }
-
-                    ToggleOptionRow(
-                        title: "Use default config",
-                        description: "Use the built-in config at config/slidescribe.conf.",
-                        flag: "--config",
-                        isOn: $useDefaultConfig
-                    )
-
-                    FilePickerField(
-                        title: "Config file",
-                        description: "Use an explicit config file.",
-                        flag: "--config-file",
-                        text: $configFile,
-                        placeholder: "/path/to/slidescribe.conf",
-                        buttonTitle: "Choose",
-                        action: onPickConfigFile
-                    )
                 }
 
-                OptionsSection(title: "Pipeline Control", subtitle: "Skip parts of the workflow or restart from a specific step.") {
-                    ToggleOptionRow(
-                        title: "Skip video download",
-                        description: "Skip downloading the video.",
-                        flag: "--skip-download",
-                        isOn: $skipDownload
-                    )
-                    ToggleOptionRow(
-                        title: "Skip subtitles",
-                        description: "Skip downloading subtitles.",
-                        flag: "--skip-subs",
-                        isOn: $skipSubs
-                    )
-                    ToggleOptionRow(
-                        title: "Skip screenshots",
-                        description: "Skip the screenshot extraction step.",
-                        flag: "--skip-screenshots",
-                        isOn: $skipScreenshots
-                    )
-                    ToggleOptionRow(
-                        title: "Skip LLM pipeline",
-                        description: "Skip the LLM pipeline.",
-                        flag: "--skip-llm",
-                        isOn: $skipLLM
-                    )
-                    ToggleOptionRow(
-                        title: "Skip PDF and DOCX export",
-                        description: "Skip PDF and DOCX generation.",
-                        flag: "--skip-pdf",
-                        isOn: $skipPDF
-                    )
-
-                    OptionFieldBlock(title: "Start from step", description: "Start the pipeline from an intermediate step.", flag: "--from-step") {
-                        Picker("", selection: $fromStep) {
-                            Text("Default").tag("")
-                            Text("screenshots").tag("screenshots")
-                            Text("llm").tag("llm")
-                            Text("pdf").tag("pdf")
+                if matchesSearch("Configuration", "Verbosity, prompt customization, and config sources.", "verbosity", "config") {
+                    OptionsSection(title: "Configuration", subtitle: "Verbosity, prompt customization, and config sources.") {
+                        if matchesSearch("Verbosity", "Overall verbosity level for the script.", "--verbosity", "quiet", "normal", "verbose", "debug") {
+                            OptionFieldBlock(title: "Verbosity", description: "Overall verbosity level for the script.", flag: "--verbosity") {
+                                Picker("", selection: $verbosity) {
+                                    Text("Default").tag("")
+                                    Text("quiet").tag("quiet")
+                                    Text("normal").tag("normal")
+                                    Text("verbose").tag("verbose")
+                                    Text("debug").tag("debug")
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
 
-                    ToggleOptionRow(
-                        title: "Force all steps",
-                        description: "Re-run steps even when checkpoints already exist.",
-                        flag: "--force-all",
-                        isOn: $forceAll
-                    )
+                        if matchesSearch("Script verbosity", "Explicit alias for the general verbosity setting.", "--script-verbosity", "quiet", "normal", "verbose", "debug") {
+                            OptionFieldBlock(title: "Script verbosity", description: "Explicit alias for the general verbosity setting.", flag: "--script-verbosity") {
+                                Picker("", selection: $scriptVerbosity) {
+                                    Text("Default").tag("")
+                                    Text("quiet").tag("quiet")
+                                    Text("normal").tag("normal")
+                                    Text("verbose").tag("verbose")
+                                    Text("debug").tag("debug")
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        if matchesSearch("Use default config", "Use the built-in config at config/slidescribe.conf.", "--config") {
+                            ToggleOptionRow(
+                                title: "Use default config",
+                                description: "Use the built-in config at config/slidescribe.conf.",
+                                flag: "--config",
+                                isOn: $useDefaultConfig
+                            )
+                        }
+
+                        if matchesSearch("Config file", "Use an explicit config file.", "--config-file") {
+                            FilePickerField(
+                                title: "Config file",
+                                description: "Use an explicit config file.",
+                                flag: "--config-file",
+                                text: $configFile,
+                                placeholder: "/path/to/slidescribe.conf",
+                                buttonTitle: "Choose",
+                                action: onPickConfigFile
+                            )
+                        }
+                    }
                 }
 
-                OptionsSection(title: "Cleanup & Debug", subtitle: "Cleanup behavior, diagnostics, and execution inspection.") {
-                    ToggleOptionRow(
-                        title: "Delete intermediate SRT files",
-                        description: "Delete intermediate SRT files at the end of the pipeline.",
-                        flag: "--delete-intermediate-srts",
-                        isOn: $deleteIntermediateSrts
-                    )
-                    ToggleOptionRow(
-                        title: "Delete raw JSON output",
-                        description: "Delete raw JSON output from the chatgpt wrapper at the end of the pipeline.",
-                        flag: "--delete-raw-json",
-                        isOn: $deleteRawJSON
-                    )
-                    ToggleOptionRow(
-                        title: "Delete temporary files",
-                        description: "Delete temporary files managed by the pipeline.",
-                        flag: "--delete-temp",
-                        isOn: $deleteTemp
-                    )
-                    ToggleOptionRow(
-                        title: "Dry run",
-                        description: "Show the config and plan without executing.",
-                        flag: "--dry-run",
-                        isOn: $dryRun
-                    )
-                    ToggleOptionRow(
-                        title: "Extended manual mode",
-                        description: "Request the extended manual in the CLI.",
-                        flag: "--manual",
-                        isOn: $manual
-                    )
+                if matchesSearch("Pipeline Control", "Skip parts of the workflow or restart from a specific step.", "skip", "from step", "summary", "force all") {
+                    OptionsSection(title: "Pipeline Control", subtitle: "Skip parts of the workflow or restart from a specific step.") {
+                        if matchesSearch("Skip video download", "Skip downloading the video.", "--skip-download") {
+                            ToggleOptionRow(
+                                title: "Skip video download",
+                                description: "Skip downloading the video.",
+                                flag: "--skip-download",
+                                isOn: $skipDownload
+                            )
+                        }
+
+                        if matchesSearch("Skip subtitles", "Skip downloading subtitles.", "--skip-subs") {
+                            ToggleOptionRow(
+                                title: "Skip subtitles",
+                                description: "Skip downloading subtitles.",
+                                flag: "--skip-subs",
+                                isOn: $skipSubs
+                            )
+                        }
+
+                        if matchesSearch("Skip screenshots", "Skip the screenshot extraction step.", "--skip-screenshots") {
+                            ToggleOptionRow(
+                                title: "Skip screenshots",
+                                description: "Skip the screenshot extraction step.",
+                                flag: "--skip-screenshots",
+                                isOn: $skipScreenshots
+                            )
+                        }
+
+                        if matchesSearch("Skip LLM pipeline", "Skip the LLM pipeline.", "--skip-llm") {
+                            ToggleOptionRow(
+                                title: "Skip LLM pipeline",
+                                description: "Skip the LLM pipeline.",
+                                flag: "--skip-llm",
+                                isOn: $skipLLM
+                            )
+                        }
+
+                        if matchesSearch("Skip final summary", "Skip the final summary generated from slide_texts.json.", "--skip-summary", "summary") {
+                            ToggleOptionRow(
+                                title: "Skip final summary",
+                                description: "Skip the final summary generated from slide_texts.json.",
+                                flag: "--skip-summary",
+                                isOn: $skipSummary
+                            )
+                        }
+
+                        if matchesSearch("Skip PDF and DOCX export", "Skip PDF and DOCX generation.", "--skip-pdf") {
+                            ToggleOptionRow(
+                                title: "Skip PDF and DOCX export",
+                                description: "Skip PDF and DOCX generation.",
+                                flag: "--skip-pdf",
+                                isOn: $skipPDF
+                            )
+                        }
+
+                        if matchesSearch("Start from step", "Start the pipeline from an intermediate step.", "--from-step", "screenshots", "llm", "pdf") {
+                            OptionFieldBlock(title: "Start from step", description: "Start the pipeline from an intermediate step.", flag: "--from-step") {
+                                Picker("", selection: $fromStep) {
+                                    Text("Default").tag("")
+                                    Text("screenshots").tag("screenshots")
+                                    Text("llm").tag("llm")
+                                    Text("pdf").tag("pdf")
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        if matchesSearch("Force all steps", "Re-run steps even when checkpoints already exist.", "--force-all") {
+                            ToggleOptionRow(
+                                title: "Force all steps",
+                                description: "Re-run steps even when checkpoints already exist.",
+                                flag: "--force-all",
+                                isOn: $forceAll
+                            )
+                        }
+                    }
+                }
+
+                if matchesSearch("Cleanup & Debug", "Cleanup behavior, diagnostics, and execution inspection.", "delete", "dry run", "manual") {
+                    OptionsSection(title: "Cleanup & Debug", subtitle: "Cleanup behavior, diagnostics, and execution inspection.") {
+                        if matchesSearch("Delete intermediate SRT files", "Delete intermediate SRT files at the end of the pipeline.", "--delete-intermediate-srts") {
+                            ToggleOptionRow(
+                                title: "Delete intermediate SRT files",
+                                description: "Delete intermediate SRT files at the end of the pipeline.",
+                                flag: "--delete-intermediate-srts",
+                                isOn: $deleteIntermediateSrts
+                            )
+                        }
+
+                        if matchesSearch("Delete raw JSON output", "Delete raw JSON output from the chatgpt wrapper at the end of the pipeline.", "--delete-raw-json") {
+                            ToggleOptionRow(
+                                title: "Delete raw JSON output",
+                                description: "Delete raw JSON output from the chatgpt wrapper at the end of the pipeline.",
+                                flag: "--delete-raw-json",
+                                isOn: $deleteRawJSON
+                            )
+                        }
+
+                        if matchesSearch("Delete temporary files", "Delete temporary files managed by the pipeline.", "--delete-temp") {
+                            ToggleOptionRow(
+                                title: "Delete temporary files",
+                                description: "Delete temporary files managed by the pipeline.",
+                                flag: "--delete-temp",
+                                isOn: $deleteTemp
+                            )
+                        }
+
+                        if matchesSearch("Dry run", "Show the config and plan without executing.", "--dry-run") {
+                            ToggleOptionRow(
+                                title: "Dry run",
+                                description: "Show the config and plan without executing.",
+                                flag: "--dry-run",
+                                isOn: $dryRun
+                            )
+                        }
+
+                        if matchesSearch("Extended manual mode", "Request the extended manual in the CLI.", "--manual") {
+                            ToggleOptionRow(
+                                title: "Extended manual mode",
+                                description: "Request the extended manual in the CLI.",
+                                flag: "--manual",
+                                isOn: $manual
+                            )
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 8)
