@@ -18,9 +18,15 @@ struct ContentView: View {
         case manual
     }
 
+    private enum FocusedField: Hashable {
+        case youtubeURL
+    }
+
     @Environment(\.colorScheme) private var colorScheme
+    @FocusState private var focusedField: FocusedField?
 
     @State private var outputFolderPath: String = ""
+    @State private var resolvedOutputFolderPath: String = ""
     @State private var videoInputMode: VideoInputMode = .youtubeURL
     @State private var inputURL: String = ""
     @State private var inputMKV: String = ""
@@ -99,6 +105,14 @@ struct ContentView: View {
                 .padding(.bottom, 18)
         }
         .frame(minWidth: 835, minHeight: 620)
+        .background(shortcutCommands)
+        .onReceive(NotificationCenter.default.publisher(for: .slideScribeCommand)) { notification in
+            guard let action = notification.userInfo?[SlideScribeMenuAction.userInfoKey] as? SlideScribeMenuAction else {
+                return
+            }
+
+            handleMenuAction(action)
+        }
         .alert("Errore esecuzione", isPresented: $showExecutionError) {
             Button("OK", role: .cancel) { }
         } message: {
@@ -118,7 +132,7 @@ struct ContentView: View {
                                 icon: "eye",
                                 title: "Reveal in Finder",
                                 tint: .primary,
-                                isEnabled: !outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && workdirValidationMessage == nil
+                                isEnabled: !effectiveWorkdirPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && effectiveWorkdirValidationMessage == nil
                             ) {
                                 openWorkdirInFinder()
                             }
@@ -128,7 +142,7 @@ struct ContentView: View {
                             }
 
                             SidebarUtilityIconButton(icon: "slider.horizontal.3", title: "Options", tint: .primary) {
-                                rightPanelMode = .options
+                                toggleOptionsPanel()
                             }
 
                             SidebarUtilityIconButton(icon: "arrow.counterclockwise", title: "Reset", tint: .primary) {
@@ -136,7 +150,7 @@ struct ContentView: View {
                             }
 
                             SidebarUtilityIconButton(icon: "questionmark", title: "Show SlideScribe manual", tint: .primary) {
-                                showManualPanel()
+                                toggleManualPanel()
                             }
                         }
                     }
@@ -158,6 +172,7 @@ struct ContentView: View {
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 12.5))
                                 .autocorrectionDisabled(true)
+                                .focused($focusedField, equals: .youtubeURL)
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 8)
                                 .background(
@@ -221,7 +236,7 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.regular)
                         .buttonBorderShape(.roundedRectangle(radius: 10))
-                        .keyboardShortcut(.defaultAction)
+                        .keyboardShortcut("r", modifiers: [.command])
                         .disabled(isRunning || workdirValidationMessage != nil || activeVideoInputValidationMessage != nil)
 
                         Button {
@@ -234,6 +249,7 @@ struct ContentView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.regular)
                         .buttonBorderShape(.roundedRectangle(radius: 10))
+                        .keyboardShortcut("g", modifiers: [.command])
                         .tint(.secondary)
                         .opacity(workdirValidationMessage != nil || activeVideoInputValidationMessage != nil ? 0.68 : 0.88)
                         .disabled(workdirValidationMessage != nil || activeVideoInputValidationMessage != nil)
@@ -248,6 +264,7 @@ struct ContentView: View {
                             .buttonStyle(.bordered)
                             .controlSize(.regular)
                             .buttonBorderShape(.roundedRectangle(radius: 10))
+                            .keyboardShortcut(".", modifiers: [.command])
                         }
                     }
 
@@ -477,6 +494,7 @@ struct ContentView: View {
                         Image(systemName: "xmark")
                     }
                     .buttonStyle(PanelToolbarIconButtonStyle())
+                    .keyboardShortcut("k", modifiers: [.command])
                     .disabled(isRunning || executionLog.isEmpty)
                     .help("Clear terminal output")
                 }
@@ -526,18 +544,96 @@ struct ContentView: View {
         """
     }
 
+    private var shortcutCommands: some View {
+        Group {
+            Button(action: handleOpenInputShortcut) {
+                EmptyView()
+            }
+            .keyboardShortcut("o", modifiers: [.command])
+
+            Button(action: pickOutputFolder) {
+                EmptyView()
+            }
+            .keyboardShortcut("o", modifiers: [.command, .shift])
+
+            Button(action: showOptionsPanel) {
+                EmptyView()
+            }
+            .keyboardShortcut(",", modifiers: [.command])
+
+            Button(action: switchToYouTubeInput) {
+                EmptyView()
+            }
+            .keyboardShortcut("1", modifiers: [.command])
+
+            Button(action: switchToLocalFileInput) {
+                EmptyView()
+            }
+            .keyboardShortcut("2", modifiers: [.command])
+
+            Button(action: focusYouTubeURLField) {
+                EmptyView()
+            }
+            .keyboardShortcut("l", modifiers: [.command])
+        }
+        .hidden()
+    }
+
+    private func handleMenuAction(_ action: SlideScribeMenuAction) {
+        switch action {
+        case .openInput:
+            handleOpenInputShortcut()
+        case .openWorkdir:
+            pickOutputFolder()
+        case .toggleOptions:
+            showOptionsPanel()
+        case .runWorkflow:
+            runCommand()
+        case .stopWorkflow:
+            stopRunningProcess()
+        case .clearTerminal:
+            clearExecutionLog()
+        case .generateCommand:
+            generateCommand()
+        case .switchToYouTubeURL:
+            switchToYouTubeInput()
+        case .switchToLocalFile:
+            switchToLocalFileInput()
+        case .focusYouTubeURLField:
+            focusYouTubeURLField()
+        case .showManual:
+            showManualPanel()
+        }
+    }
+
     private var outputFolderDisplayName: String {
-        if outputFolderPath.isEmpty {
+        let effectivePath = effectiveWorkdirPath
+        if effectivePath.isEmpty {
             return "Choose Working Directory"
         }
-        return URL(fileURLWithPath: outputFolderPath).lastPathComponent
+        return URL(fileURLWithPath: effectivePath).lastPathComponent
     }
 
     private var outputFolderHeroSubtitle: String {
-        if let workdirValidationMessage {
-            return workdirValidationMessage
+        if let effectiveWorkdirValidationMessage {
+            return effectiveWorkdirValidationMessage
         }
-        return "Project workspace ready"
+        return outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !resolvedOutputFolderPath.isEmpty
+            ? "Workdir resolved from script output"
+            : "Project workspace ready"
+    }
+
+    private var effectiveWorkdirPath: String {
+        let explicitPath = outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !explicitPath.isEmpty {
+            return explicitPath
+        }
+
+        return resolvedOutputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var effectiveWorkdirValidationMessage: String? {
+        validateDirectoryPath(effectiveWorkdirPath)
     }
 
     private var statusBadgeText: String {
@@ -545,7 +641,11 @@ struct ContentView: View {
     }
 
     private var workdirValidationMessage: String? {
-        let trimmed = outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        validateDirectoryPath(outputFolderPath)
+    }
+
+    private func validateDirectoryPath(_ path: String) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             return nil
         }
@@ -718,10 +818,20 @@ struct ContentView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         outputFolderPath = url.path
+        resolvedOutputFolderPath = ""
+    }
+
+    private func handleOpenInputShortcut() {
+        switch videoInputMode {
+        case .youtubeURL:
+            focusYouTubeURLField()
+        case .localFile:
+            pickInputMKV()
+        }
     }
 
     private func openWorkdirInFinder() {
-        let trimmed = outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = effectiveWorkdirPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
         let url = URL(fileURLWithPath: trimmed)
@@ -730,6 +840,7 @@ struct ContentView: View {
 
     private func resetInputs() {
         outputFolderPath = ""
+        resolvedOutputFolderPath = ""
         videoInputMode = .youtubeURL
         inputURL = ""
         generatedCommand = ""
@@ -783,6 +894,23 @@ struct ContentView: View {
         videoInputMode = .youtubeURL
     }
 
+    private func showOptionsPanel() {
+        toggleOptionsPanel()
+    }
+
+    private func toggleOptionsPanel() {
+        rightPanelMode = rightPanelMode == .options ? .terminal : .options
+    }
+
+    private func switchToYouTubeInput() {
+        focusYouTubeURLField()
+    }
+
+    private func switchToLocalFileInput() {
+        videoInputMode = .localFile
+        focusedField = nil
+    }
+
     private func pickFilePath() -> String? {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -804,6 +932,14 @@ struct ContentView: View {
 
         videoInputMode = .localFile
         inputMKV = path
+    }
+
+    private func focusYouTubeURLField() {
+        videoInputMode = .youtubeURL
+
+        DispatchQueue.main.async {
+            focusedField = .youtubeURL
+        }
     }
 
     private func handleInputMKVDrop(providers: [NSItemProvider]) -> Bool {
@@ -865,6 +1001,9 @@ struct ContentView: View {
         rightPanelMode = .terminal
         generatedCommand = buildCommandString()
         executionLog = ""
+        if outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            resolvedOutputFolderPath = ""
+        }
         executionStatus = "Running"
         isRunning = true
         feedbackMessage = "Execution in progress…"
@@ -929,6 +1068,25 @@ struct ContentView: View {
 
     private func appendToLog(_ text: String) {
         executionLog += text
+        updateResolvedWorkdirFromLog()
+    }
+
+    private func updateResolvedWorkdirFromLog() {
+        guard outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        let pattern = #"(?m)^\[[^\]]+\]\s+Cartella di lavoro:\s*(.+)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+
+        let range = NSRange(executionLog.startIndex..<executionLog.endIndex, in: executionLog)
+        guard let match = regex.matches(in: executionLog, range: range).last,
+              let pathRange = Range(match.range(at: 1), in: executionLog) else {
+            return
+        }
+
+        let path = executionLog[pathRange].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return }
+
+        resolvedOutputFolderPath = path
     }
 
     private func clearExecutionLog() {
@@ -943,6 +1101,15 @@ struct ContentView: View {
     }
 
     private func showManualPanel() {
+        toggleManualPanel()
+    }
+
+    private func toggleManualPanel() {
+        if rightPanelMode == .manual {
+            rightPanelMode = .terminal
+            return
+        }
+
         rightPanelMode = .manual
         if manualOutput.isEmpty && !isManualLoading {
             loadManualContent()
