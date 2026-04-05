@@ -809,6 +809,11 @@ struct ContentView: View {
     }
 
     private func pickOutputFolder() {
+        _ = requestOutputFolderSelection()
+    }
+
+    @discardableResult
+    private func requestOutputFolderSelection() -> Bool {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -816,9 +821,10 @@ struct ContentView: View {
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose folder"
 
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
         outputFolderPath = url.path
         resolvedOutputFolderPath = ""
+        return true
     }
 
     private func handleOpenInputShortcut() {
@@ -993,6 +999,13 @@ struct ContentView: View {
     }
 
     private func runCommand() {
+        if outputFolderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard requestOutputFolderSelection() else {
+                feedbackMessage = "Run cancelled."
+                return
+            }
+        }
+
         guard workdirValidationMessage == nil, activeVideoInputValidationMessage == nil else {
             feedbackMessage = "Fix the workdir or video input before running."
             return
