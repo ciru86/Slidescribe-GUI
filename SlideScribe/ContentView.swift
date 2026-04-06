@@ -48,7 +48,7 @@ struct ContentView: View {
     @State private var lessonTopic: String = ""
     @State private var terminologyContext: String = ""
     @State private var terminologyFile: String = ""
-    @State private var roiMode: String = "shared"
+    @State private var roiMode: String = "separate"
     @State private var enhanceSlide: Bool = true
     @State private var enhancePreset: String = ""
     @State private var chunkSize: String = ""
@@ -861,7 +861,7 @@ struct ContentView: View {
         terminologyContext = ""
         terminologyFile = ""
         inputMKV = ""
-        roiMode = "shared"
+        roiMode = "separate"
         enhanceSlide = true
         enhancePreset = ""
         chunkSize = ""
